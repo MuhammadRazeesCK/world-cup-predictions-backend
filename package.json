@@ -8,6 +8,7 @@
         "build": "tsc",
         "start": "node dist/index.js",
         "migrate": "ts-node -r dotenv/config node_modules/.bin/knex --knexfile knexfile.ts migrate:latest",
+        "migrate:prod": "NODE_ENV=production ts-node -r dotenv/config node_modules/.bin/knex --knexfile knexfile.ts migrate:latest",
         "migrate:rollback": "ts-node -r dotenv/config node_modules/.bin/knex --knexfile knexfile.ts migrate:rollback",
         "seed:admin": "ts-node -r dotenv/config scripts/seed-admin.ts"
     },

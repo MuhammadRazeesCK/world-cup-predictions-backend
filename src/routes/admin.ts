@@ -1,0 +1,405 @@
+import { Router, Request, Response } from 'express';
+import multer from 'multer';
+import { parse } from 'csv-parse/sync';
+import { DateTime } from 'luxon';
+import bcrypt from 'bcryptjs';
+import db from '../db';
+import { authenticateToken } from '../middleware/auth';
+import { requireAdmin } from '../middleware/adminAuth';
+
+const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+const VALID_STAGES = ['group', 'round16', 'qf', 'sf', 'final'];
+
+function calcPredictionCloseTime(kickoffTime: string): Date {
+    return DateTime.fromISO(kickoffTime).minus({ minutes: 30 }).toJSDate();
+}
+
+async function logAdminAction(adminId: string, action: string, details: Record<string, unknown>): Promise<void> {
+    await db('admin_logs').insert({ admin_id: adminId, action, details: JSON.stringify(details) });
+}
+
+// All admin routes require authentication + admin role
+router.use(authenticateToken, requireAdmin);
+
+// POST /api/admin/fixtures/bulk-upload
+router.post('/fixtures/bulk-upload', upload.single('file'), async (req: Request, res: Response): Promise<void> => {
+    if (!req.file) {
+        res.status(400).json({ success: false, error: 'No CSV file uploaded', code: 'VALIDATION_ERROR' });
+        return;
+    }
+
+    let records: Record<string, string>[];
+    try {
+        records = parse(req.file.buffer.toString('utf-8'), {
+            columns: true,
+            skip_empty_lines: true,
+            trim: true,
+        });
+    } catch {
+        res.status(400).json({ success: false, error: 'Invalid CSV format', code: 'VALIDATION_ERROR' });
+        return;
+    }
+
+    let uploaded = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < records.length; i++) {
+        const row = records[i];
+        const rowNum = i + 2; // 1-indexed + header row
+
+        // Validate
+        const matchNumber = parseInt(row.match_number, 10);
+        if (!matchNumber || matchNumber < 1 || matchNumber > 64) {
+            errors.push(`Row ${rowNum}: Invalid match_number (must be 1-64)`);
+            continue;
+        }
+
+        if (!row.home_team?.trim() || !row.away_team?.trim()) {
+            errors.push(`Row ${rowNum}: home_team and away_team are required`);
+            continue;
+        }
+
+        if (!row.kickoff_time || !DateTime.fromISO(row.kickoff_time).isValid) {
+            errors.push(`Row ${rowNum}: Invalid kickoff_time format (must be ISO 8601)`);
+            continue;
+        }
+
+        if (!VALID_STAGES.includes(row.stage)) {
+            errors.push(`Row ${rowNum}: Invalid stage (must be one of ${VALID_STAGES.join(', ')})`);
+            continue;
+        }
+
+        const kickoffDate = DateTime.fromISO(row.kickoff_time).toJSDate();
+        const predictionClosesAt = calcPredictionCloseTime(row.kickoff_time);
+
+        try {
+            // Upsert by match_number
+            const existing = await db('fixtures').where({ match_number: matchNumber }).first();
+
+            if (existing) {
+                await db('fixtures').where({ match_number: matchNumber }).update({
+                    home_team: row.home_team.trim(),
+                    away_team: row.away_team.trim(),
+                    kickoff_time: kickoffDate,
+                    stage: row.stage,
+                    prediction_closes_at: predictionClosesAt,
+                    updated_at: new Date(),
+                });
+            } else {
+                await db('fixtures').insert({
+                    match_number: matchNumber,
+                    home_team: row.home_team.trim(),
+                    away_team: row.away_team.trim(),
+                    kickoff_time: kickoffDate,
+                    stage: row.stage,
+                    status: 'scheduled',
+                    prediction_closes_at: predictionClosesAt,
+                });
+            }
+
+            uploaded++;
+        } catch (err) {
+            errors.push(`Row ${rowNum}: Database error - ${(err as Error).message}`);
+        }
+    }
+
+    await logAdminAction(req.user!.sub, 'bulk_upload', { uploaded, total: records.length, errors });
+
+    res.json({
+        success: true,
+        data: { uploaded, total: records.length, errors },
+        message:
+            errors.length > 0
+                ? `Uploaded ${uploaded} of ${records.length} fixtures. ${errors.length} errors encountered.`
+                : `Successfully uploaded ${uploaded} fixtures`,
+    });
+});
+
+// POST /api/admin/fixtures - Create single fixture
+router.post('/fixtures', async (req: Request, res: Response): Promise<void> => {
+    const { match_number, home_team, away_team, kickoff_time, stage } = req.body;
+
+    if (!match_number || !home_team || !away_team || !kickoff_time || !stage) {
+        res.status(400).json({ success: false, error: 'All fields are required', code: 'VALIDATION_ERROR' });
+        return;
+    }
+
+    const matchNum = parseInt(String(match_number), 10);
+    if (isNaN(matchNum) || matchNum < 1 || matchNum > 64) {
+        res.status(400).json({ success: false, error: 'match_number must be between 1 and 64', code: 'VALIDATION_ERROR' });
+        return;
+    }
+
+    if (!DateTime.fromISO(kickoff_time).isValid) {
+        res.status(400).json({ success: false, error: 'Invalid kickoff_time format', code: 'VALIDATION_ERROR' });
+        return;
+    }
+
+    if (!VALID_STAGES.includes(stage)) {
+        res.status(400).json({ success: false, error: `stage must be one of: ${VALID_STAGES.join(', ')}`, code: 'VALIDATION_ERROR' });
+        return;
+    }
+
+    try {
+        const existing = await db('fixtures').where({ match_number: matchNum }).first();
+        if (existing) {
+            res.status(409).json({ success: false, error: 'Match number already exists', code: 'CONFLICT' });
+            return;
+        }
+
+        const [fixture] = await db('fixtures')
+            .insert({
+                match_number: matchNum,
+                home_team: home_team.trim(),
+                away_team: away_team.trim(),
+                kickoff_time: DateTime.fromISO(kickoff_time).toJSDate(),
+                stage,
+                status: 'scheduled',
+                prediction_closes_at: calcPredictionCloseTime(kickoff_time),
+            })
+            .returning('*');
+
+        await logAdminAction(req.user!.sub, 'fixture_created', { fixture_id: fixture.id, match_number: matchNum });
+
+        res.status(201).json({ success: true, data: fixture });
+    } catch (err) {
+        console.error('Create fixture error:', err);
+        res.status(500).json({ success: false, error: 'Failed to create fixture', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// PUT /api/admin/fixtures/:id - Update fixture
+router.put('/fixtures/:id', async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    const { home_team, away_team, kickoff_time, stage, home_score, away_score, status } = req.body;
+
+    try {
+        const fixture = await db('fixtures').where({ id }).first();
+        if (!fixture) {
+            res.status(404).json({ success: false, error: 'Fixture not found', code: 'NOT_FOUND' });
+            return;
+        }
+
+        // Cannot update scores on a completed fixture
+        if (fixture.status === 'completed' && (home_score !== undefined || away_score !== undefined)) {
+            res.status(400).json({ success: false, error: 'Cannot update scores on a completed fixture', code: 'VALIDATION_ERROR' });
+            return;
+        }
+
+        const updates: Record<string, unknown> = { updated_at: new Date() };
+
+        if (home_team) updates.home_team = home_team.trim();
+        if (away_team) updates.away_team = away_team.trim();
+        if (stage && VALID_STAGES.includes(stage)) updates.stage = stage;
+        if (status && ['scheduled', 'live', 'completed'].includes(status)) updates.status = status;
+
+        if (kickoff_time) {
+            if (!DateTime.fromISO(kickoff_time).isValid) {
+                res.status(400).json({ success: false, error: 'Invalid kickoff_time format', code: 'VALIDATION_ERROR' });
+                return;
+            }
+            updates.kickoff_time = DateTime.fromISO(kickoff_time).toJSDate();
+            updates.prediction_closes_at = calcPredictionCloseTime(kickoff_time);
+        }
+
+        if (home_score !== undefined && away_score !== undefined) {
+            const hs = parseInt(String(home_score), 10);
+            const as_ = parseInt(String(away_score), 10);
+            if (isNaN(hs) || isNaN(as_) || hs < 0 || as_ < 0) {
+                res.status(400).json({ success: false, error: 'Invalid scores', code: 'VALIDATION_ERROR' });
+                return;
+            }
+            updates.home_score = hs;
+            updates.away_score = as_;
+        }
+
+        const [updated] = await db('fixtures').where({ id }).update(updates).returning('*');
+        await logAdminAction(req.user!.sub, 'fixture_updated', { fixture_id: id, changes: updates });
+
+        res.json({ success: true, data: updated });
+    } catch (err) {
+        console.error('Update fixture error:', err);
+        res.status(500).json({ success: false, error: 'Failed to update fixture', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// DELETE /api/admin/fixtures/:id
+router.delete('/fixtures/:id', async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+
+    try {
+        const fixture = await db('fixtures').where({ id }).first();
+        if (!fixture) {
+            res.status(404).json({ success: false, error: 'Fixture not found', code: 'NOT_FOUND' });
+            return;
+        }
+
+        if (fixture.status === 'live' || fixture.status === 'completed') {
+            res.status(400).json({
+                success: false,
+                error: 'Cannot delete a live or completed fixture',
+                code: 'VALIDATION_ERROR',
+            });
+            return;
+        }
+
+        // Cascade delete predictions first
+        await db('predictions').where({ fixture_id: id }).delete();
+        await db('fixtures').where({ id }).delete();
+
+        await logAdminAction(req.user!.sub, 'fixture_deleted', { fixture_id: id, match_number: fixture.match_number });
+
+        res.json({ success: true, message: 'Fixture deleted successfully' });
+    } catch (err) {
+        console.error('Delete fixture error:', err);
+        res.status(500).json({ success: false, error: 'Failed to delete fixture', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// GET /api/admin/fixtures - List all fixtures with prediction counts
+router.get('/fixtures', async (_req: Request, res: Response): Promise<void> => {
+    try {
+        const fixtures = await db('fixtures as f')
+            .leftJoin(db.raw('(SELECT fixture_id, COUNT(*) as prediction_count FROM predictions GROUP BY fixture_id) pc'), 'f.id', 'pc.fixture_id')
+            .orderBy('f.kickoff_time', 'asc')
+            .select('f.*', db.raw('COALESCE(pc.prediction_count, 0) as prediction_count'));
+
+        res.json({ success: true, data: fixtures });
+    } catch (err) {
+        console.error('Admin get fixtures error:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch fixtures', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// GET /api/admin/logs
+router.get('/logs', async (req: Request, res: Response): Promise<void> => {
+    const { action, admin_id, startDate, endDate, limit = '100', offset = '0' } = req.query;
+    const limitNum = Math.min(500, parseInt(String(limit), 10) || 100);
+    const offsetNum = Math.max(0, parseInt(String(offset), 10) || 0);
+
+    try {
+        let query = db('admin_logs as al')
+            .join('users as u', 'al.admin_id', 'u.id')
+            .orderBy('al.created_at', 'desc')
+            .limit(limitNum)
+            .offset(offsetNum)
+            .select('al.*', 'u.email as admin_email');
+
+        if (action) query = query.where('al.action', action as string);
+        if (admin_id) query = query.where('al.admin_id', admin_id as string);
+        if (startDate) query = query.where('al.created_at', '>=', new Date(startDate as string));
+        if (endDate) query = query.where('al.created_at', '<=', new Date(endDate as string));
+
+        const logs = await query;
+        res.json({ success: true, data: logs });
+    } catch (err) {
+        console.error('Admin logs error:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch logs', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// GET /api/admin/users - List all users
+router.get('/users', async (_req: Request, res: Response): Promise<void> => {
+    try {
+        const users = await db('users')
+            .select('id', 'email', 'username', 'role', 'is_active', 'created_at', 'last_login')
+            .orderBy('created_at', 'desc');
+
+        res.json({ success: true, data: users });
+    } catch (err) {
+        console.error('Admin get users error:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch users', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// POST /api/admin/users - Create a user
+router.post('/users', async (req: Request, res: Response): Promise<void> => {
+    const { email, username, password, role = 'user' } = req.body;
+
+    if (!email || !username || !password) {
+        res.status(400).json({ success: false, error: 'email, username and password are required', code: 'VALIDATION_ERROR' });
+        return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        res.status(400).json({ success: false, error: 'Invalid email format', code: 'VALIDATION_ERROR' });
+        return;
+    }
+    if (!/^[a-zA-Z0-9_]{3,50}$/.test(username)) {
+        res.status(400).json({ success: false, error: 'Username must be 3-50 alphanumeric/underscore chars', code: 'VALIDATION_ERROR' });
+        return;
+    }
+    if (password.length < 8) {
+        res.status(400).json({ success: false, error: 'Password must be at least 8 characters', code: 'VALIDATION_ERROR' });
+        return;
+    }
+    if (!['user', 'admin'].includes(role)) {
+        res.status(400).json({ success: false, error: 'Role must be user or admin', code: 'VALIDATION_ERROR' });
+        return;
+    }
+
+    try {
+        const existing = await db('users').where({ email }).orWhere({ username }).first();
+        if (existing) {
+            res.status(409).json({ success: false, error: 'Email or username already taken', code: 'CONFLICT' });
+            return;
+        }
+
+        const passwordHash = await bcrypt.hash(password, 10);
+        const [user] = await db('users')
+            .insert({ email, username, password_hash: passwordHash, role, is_active: true })
+            .returning(['id', 'email', 'username', 'role', 'created_at']);
+
+        await db('admin_logs').insert({
+            admin_id: (req as any).user!.sub,
+            admin_email: (req as any).user!.email,
+            action: 'CREATE_USER',
+            details: { email, username, role },
+        });
+
+        res.status(201).json({ success: true, data: user });
+    } catch (err) {
+        console.error('Admin create user error:', err);
+        res.status(500).json({ success: false, error: 'Failed to create user', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// POST /api/admin/users/:id/reset-password - Reset a user's password
+router.post('/users/:id/reset-password', async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    const { password } = req.body;
+
+    if (!password || password.length < 8) {
+        res.status(400).json({ success: false, error: 'Password must be at least 8 characters', code: 'VALIDATION_ERROR' });
+        return;
+    }
+
+    try {
+        const user = await db('users').where({ id }).first();
+        if (!user) {
+            res.status(404).json({ success: false, error: 'User not found', code: 'NOT_FOUND' });
+            return;
+        }
+
+        const passwordHash = await bcrypt.hash(password, 10);
+        await db('users').where({ id }).update({ password_hash: passwordHash });
+
+        // Revoke all existing sessions for this user
+        await db('sessions').where({ user_id: id }).update({ is_revoked: true });
+
+        await db('admin_logs').insert({
+            admin_id: (req as any).user!.sub,
+            admin_email: (req as any).user!.email,
+            action: 'RESET_PASSWORD',
+            details: { target_user_id: id, target_username: user.username },
+        });
+
+        res.json({ success: true, data: { message: 'Password reset successfully' } });
+    } catch (err) {
+        console.error('Admin reset password error:', err);
+        res.status(500).json({ success: false, error: 'Failed to reset password', code: 'INTERNAL_ERROR' });
+    }
+});
+
+export default router;

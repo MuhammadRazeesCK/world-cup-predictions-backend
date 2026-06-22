@@ -420,11 +420,11 @@ router.get('/predictions', async (_req: Request, res: Response): Promise<void> =
                 'f.away_score',
                 'p.id as prediction_id',
                 'u.username',
-                'p.home_goals',
-                'p.away_goals',
+                'p.predicted_home_goals as home_goals',
+                'p.predicted_away_goals as away_goals',
                 'p.result',
                 'p.points',
-                'p.created_at as predicted_at',
+                'p.predicted_at',
             )
             .orderBy([{ column: 'f.kickoff_time', order: 'asc' }, { column: 'u.username', order: 'asc' }]);
 

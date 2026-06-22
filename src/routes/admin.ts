@@ -4,6 +4,7 @@ import { parse } from 'csv-parse/sync';
 import { DateTime } from 'luxon';
 import bcrypt from 'bcryptjs';
 import db from '../db';
+import { calculatePoints } from '../services/scoring';
 import { authenticateToken } from '../middleware/auth';
 import { requireAdmin } from '../middleware/adminAuth';
 
@@ -182,8 +183,8 @@ router.put('/fixtures/:id', async (req: Request, res: Response): Promise<void> =
             return;
         }
 
-        // Cannot update scores on a completed fixture
-        if (fixture.status === 'completed' && (home_score !== undefined || away_score !== undefined)) {
+        // Cannot update scores on a completed fixture (unless re-completing it with corrected scores)
+        if (fixture.status === 'completed' && status !== 'completed' && (home_score !== undefined || away_score !== undefined)) {
             res.status(400).json({ success: false, error: 'Cannot update scores on a completed fixture', code: 'VALIDATION_ERROR' });
             return;
         }
@@ -217,6 +218,22 @@ router.put('/fixtures/:id', async (req: Request, res: Response): Promise<void> =
 
         const [updated] = await db('fixtures').where({ id }).update(updates).returning('*');
         await logAdminAction(req.user!.sub, 'fixture_updated', { fixture_id: id, changes: updates });
+
+        // Auto-score all predictions when fixture is marked completed with scores
+        if (updated.status === 'completed' && updated.home_score !== null && updated.away_score !== null) {
+            const preds = await db('predictions')
+                .where({ fixture_id: id })
+                .whereNull('result')
+                .select('*');
+            for (const pred of preds) {
+                const { points, resultType } = calculatePoints(
+                    { home: pred.predicted_home_goals, away: pred.predicted_away_goals },
+                    { home: updated.home_score, away: updated.away_score }
+                );
+                await db('predictions').where({ id: pred.id }).update({ points, result: resultType, updated_at: new Date() });
+            }
+            console.log(`Auto-scored ${preds.length} predictions for fixture ${updated.match_number}`);
+        }
 
         res.json({ success: true, data: updated });
     } catch (err) {
@@ -399,6 +416,32 @@ router.post('/users/:id/reset-password', async (req: Request, res: Response): Pr
     } catch (err) {
         console.error('Admin reset password error:', err);
         res.status(500).json({ success: false, error: 'Failed to reset password', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// POST /api/admin/fixtures/:id/rescore - Recalculate points for all predictions on a completed fixture
+router.post('/fixtures/:id/rescore', async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    try {
+        const fixture = await db('fixtures').where({ id }).first();
+        if (!fixture) { res.status(404).json({ success: false, error: 'Fixture not found' }); return; }
+        if (fixture.status !== 'completed' || fixture.home_score === null || fixture.away_score === null) {
+            res.status(400).json({ success: false, error: 'Fixture must be completed with scores set' });
+            return;
+        }
+        const preds = await db('predictions').where({ fixture_id: id }).select('*');
+        for (const pred of preds) {
+            const { points, resultType } = calculatePoints(
+                { home: pred.predicted_home_goals, away: pred.predicted_away_goals },
+                { home: fixture.home_score, away: fixture.away_score }
+            );
+            await db('predictions').where({ id: pred.id }).update({ points, result: resultType, updated_at: new Date() });
+        }
+        await logAdminAction(req.user!.sub, 'fixture_rescored', { fixture_id: id, predictions_updated: preds.length });
+        res.json({ success: true, data: { updated: preds.length } });
+    } catch (err) {
+        console.error('Rescore error:', err);
+        res.status(500).json({ success: false, error: 'Failed to rescore', code: 'INTERNAL_ERROR' });
     }
 });
 

@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: wc-predictions-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: worldcup
+      POSTGRES_USER: wcuser
+      POSTGRES_PASSWORD: wcpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - wc_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  wc_postgres_data:
+    # Named volume — data persists across container restarts and even `docker compose down`
+    # Only destroyed with `docker compose down -v` (don't do that unless you want to wipe data)

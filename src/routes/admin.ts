@@ -402,4 +402,68 @@ router.post('/users/:id/reset-password', async (req: Request, res: Response): Pr
     }
 });
 
+// GET /api/admin/predictions - All predictions grouped by fixture
+router.get('/predictions', async (_req: Request, res: Response): Promise<void> => {
+    try {
+        const rows = await db('predictions as p')
+            .join('users as u', 'p.user_id', 'u.id')
+            .join('fixtures as f', 'p.fixture_id', 'f.id')
+            .select(
+                'f.id as fixture_id',
+                'f.match_number',
+                'f.home_team',
+                'f.away_team',
+                'f.kickoff_time',
+                'f.stage',
+                'f.status',
+                'f.home_score',
+                'f.away_score',
+                'p.id as prediction_id',
+                'u.username',
+                'p.home_goals',
+                'p.away_goals',
+                'p.result',
+                'p.points',
+                'p.created_at as predicted_at',
+            )
+            .orderBy([{ column: 'f.kickoff_time', order: 'asc' }, { column: 'u.username', order: 'asc' }]);
+
+        // Group by fixture
+        const fixtureMap = new Map<string, { fixture: Record<string, unknown>; predictions: Record<string, unknown>[] }>();
+        for (const row of rows) {
+            const fid = String(row.fixture_id);
+            if (!fixtureMap.has(fid)) {
+                fixtureMap.set(fid, {
+                    fixture: {
+                        id: row.fixture_id,
+                        match_number: row.match_number,
+                        home_team: row.home_team,
+                        away_team: row.away_team,
+                        kickoff_time: row.kickoff_time,
+                        stage: row.stage,
+                        status: row.status,
+                        home_score: row.home_score,
+                        away_score: row.away_score,
+                    },
+                    predictions: [],
+                });
+            }
+            fixtureMap.get(fid)!.predictions.push({
+                id: row.prediction_id,
+                username: row.username,
+                home_goals: row.home_goals,
+                away_goals: row.away_goals,
+                result: row.result,
+                points: row.points,
+                predicted_at: row.predicted_at,
+            });
+        }
+
+        res.json({ success: true, data: Array.from(fixtureMap.values()) });
+    } catch (err) {
+        console.error('Admin predictions error:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch predictions', code: 'INTERNAL_ERROR' });
+    }
+});
+
 export default router;

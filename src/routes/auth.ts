@@ -16,7 +16,7 @@ const authLimiter = rateLimit({
     legacyHeaders: false,
 });
 
-const TOKEN_EXPIRY_SECONDS = 7 * 24 * 60 * 60; // 7 days
+const TOKEN_EXPIRY_SECONDS = 3 * 24 * 60 * 60; // 3 days
 
 function generateToken(user: { id: string; email: string; username: string; role: string }): string {
     const secret = process.env.JWT_SECRET;

@@ -445,31 +445,36 @@ router.post('/fixtures/:id/rescore', async (req: Request, res: Response): Promis
     }
 });
 
-// GET /api/admin/predictions - All predictions grouped by fixture
+// GET /api/admin/predictions - All predictions grouped by fixture, with pending users
 router.get('/predictions', async (_req: Request, res: Response): Promise<void> => {
     try {
-        const rows = await db('predictions as p')
-            .join('users as u', 'p.user_id', 'u.id')
-            .join('fixtures as f', 'p.fixture_id', 'f.id')
-            .select(
-                'f.id as fixture_id',
-                'f.match_number',
-                'f.home_team',
-                'f.away_team',
-                'f.kickoff_time',
-                'f.stage',
-                'f.status',
-                'f.home_score',
-                'f.away_score',
-                'p.id as prediction_id',
-                'u.username',
-                'p.predicted_home_goals as home_goals',
-                'p.predicted_away_goals as away_goals',
-                'p.result',
-                'p.points',
-                'p.predicted_at',
-            )
-            .orderBy([{ column: 'f.kickoff_time', order: 'asc' }, { column: 'u.username', order: 'asc' }]);
+        const [rows, activeUsers] = await Promise.all([
+            db('predictions as p')
+                .join('users as u', 'p.user_id', 'u.id')
+                .join('fixtures as f', 'p.fixture_id', 'f.id')
+                .select(
+                    'f.id as fixture_id',
+                    'f.match_number',
+                    'f.home_team',
+                    'f.away_team',
+                    'f.kickoff_time',
+                    'f.stage',
+                    'f.status',
+                    'f.home_score',
+                    'f.away_score',
+                    'p.id as prediction_id',
+                    'u.username',
+                    'p.predicted_home_goals as home_goals',
+                    'p.predicted_away_goals as away_goals',
+                    'p.result',
+                    'p.points',
+                    'p.predicted_at',
+                )
+                .orderBy([{ column: 'f.kickoff_time', order: 'asc' }, { column: 'u.username', order: 'asc' }]),
+                        db('users').where({ is_active: true, role: 'user' }).select('username'),
+        ]);
+
+        const allUsernames: string[] = activeUsers.map((u: { username: string }) => u.username);
 
         // Group by fixture
         const fixtureMap = new Map<string, { fixture: Record<string, unknown>; predictions: Record<string, unknown>[] }>();
@@ -502,7 +507,16 @@ router.get('/predictions', async (_req: Request, res: Response): Promise<void> =
             });
         }
 
-        res.json({ success: true, data: Array.from(fixtureMap.values()) });
+        // Attach pending_users (active users who haven't submitted for each fixture)
+        const result = Array.from(fixtureMap.values()).map(({ fixture, predictions }) => ({
+            fixture,
+            predictions,
+            pending_users: allUsernames.filter(
+                (u) => !predictions.some((p: any) => p.username === u),
+            ),
+        }));
+
+        res.json({ success: true, data: result });
     } catch (err) {
         console.error('Admin predictions error:', err);
         res.status(500).json({ success: false, error: 'Failed to fetch predictions', code: 'INTERNAL_ERROR' });

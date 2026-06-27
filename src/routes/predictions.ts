@@ -173,6 +173,69 @@ router.get('/history', authenticateToken, async (req: Request, res: Response): P
     }
 });
 
+// GET /api/predictions/history/user/:username - Get completed predictions for any user (auth required)
+router.get('/history/user/:username', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+    const { username } = req.params;
+    try {
+        const targetUser = await db('users').where({ username }).first();
+        if (!targetUser) {
+            res.status(404).json({ success: false, error: 'User not found', code: 'NOT_FOUND' });
+            return;
+        }
+
+        const rows = await db('predictions as p')
+            .join('fixtures as f', 'p.fixture_id', 'f.id')
+            .where('p.user_id', targetUser.id)
+            .where('f.status', 'completed')
+            .orderBy('f.kickoff_time', 'desc')
+            .select(
+                'p.id',
+                'p.predicted_home_goals',
+                'p.predicted_away_goals',
+                'p.points',
+                'p.result',
+                'f.id as fixture_id',
+                'f.match_number',
+                'f.home_team',
+                'f.away_team',
+                'f.kickoff_time',
+                'f.stage',
+                'f.status',
+                'f.home_score',
+                'f.away_score'
+            );
+
+        const predictions = rows.map((r) => ({
+            id: r.id,
+            fixture: {
+                id: r.fixture_id,
+                match_number: r.match_number,
+                home_team: r.home_team,
+                away_team: r.away_team,
+                kickoff_time: r.kickoff_time,
+                stage: r.stage,
+                status: r.status,
+            },
+            prediction: {
+                predicted_home_goals: r.predicted_home_goals,
+                predicted_away_goals: r.predicted_away_goals,
+                predicted_at: null,
+            },
+            result: {
+                home_goals: r.home_score,
+                away_goals: r.away_score,
+                points: r.points,
+                result_type: r.result,
+            },
+        }));
+
+        res.json({ success: true, data: { total: predictions.length, predictions } });
+    } catch (err) {
+        console.error('User history error:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch user history', code: 'INTERNAL_ERROR' });
+    }
+});
+
 // GET /api/predictions/:fixture_id - Get user's prediction for a fixture
 router.get('/:fixture_id', authenticateToken, async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.sub;

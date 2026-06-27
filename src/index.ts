@@ -77,10 +77,16 @@ import db from './db';
 app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
     try {
-        await db.migrate.latest();
-        console.log('Migrations up to date');
+        // Add avatar_url column if it doesn't exist yet
+        const hasCol = await db.schema.hasColumn('users', 'avatar_url');
+        if (!hasCol) {
+            await db.schema.alterTable('users', (t) => {
+                t.text('avatar_url').nullable().defaultTo(null);
+            });
+            console.log('Migrated: added avatar_url to users');
+        }
     } catch (err) {
-        console.error('Migration error:', err);
+        console.error('Startup migration error:', err);
     }
     // Start background job for score updates
     startScoreUpdater();

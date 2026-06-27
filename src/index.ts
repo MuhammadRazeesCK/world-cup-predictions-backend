@@ -9,6 +9,7 @@ import fixtureRoutes from './routes/fixtures';
 import predictionRoutes from './routes/predictions';
 import leaderboardRoutes from './routes/leaderboard';
 import adminRoutes from './routes/admin';
+import userRoutes from './routes/users';
 import { startScoreUpdater } from './jobs/scoreUpdater';
 
 dotenv.config();
@@ -58,6 +59,7 @@ app.use('/api/fixtures', fixtureRoutes);
 app.use('/api/predictions', predictionRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/users', userRoutes);
 
 // 404 handler
 app.use((_req, res) => {

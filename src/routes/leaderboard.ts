@@ -6,9 +6,19 @@ const router = Router();
 
 // GET /api/leaderboard - Public leaderboard
 router.get('/', async (req: Request, res: Response): Promise<void> => {
-    const { limit = '100', offset = '0' } = req.query;
+    const { limit = '100', offset = '0', stage_group = 'all' } = req.query;
     const limitNum = Math.min(200, Math.max(1, parseInt(String(limit), 10) || 100));
     const offsetNum = Math.max(0, parseInt(String(offset), 10) || 0);
+
+    // Build the prediction join clause based on stage_group filter
+    let predJoin = 'LEFT JOIN predictions p ON u.id = p.user_id';
+    if (stage_group === 'group') {
+        predJoin = `LEFT JOIN predictions p ON u.id = p.user_id
+          AND p.fixture_id IN (SELECT id FROM fixtures WHERE stage LIKE 'group%')`;
+    } else if (stage_group === 'knockout') {
+        predJoin = `LEFT JOIN predictions p ON u.id = p.user_id
+          AND p.fixture_id IN (SELECT id FROM fixtures WHERE stage NOT LIKE 'group%')`;
+    }
 
     try {
         const rows = await db.raw(`
@@ -34,7 +44,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
           1
         ) AS accuracy_percentage
       FROM users u
-      LEFT JOIN predictions p ON u.id = p.user_id
+      ${predJoin}
       WHERE u.is_active = TRUE AND u.role = 'user'
       GROUP BY u.id, u.username
       ORDER BY rank ASC

@@ -72,8 +72,16 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
     res.status(500).json({ success: false, error: 'Internal server error', code: 'INTERNAL_ERROR' });
 });
 
-app.listen(PORT, () => {
+import db from './db';
+
+app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
+    try {
+        await db.migrate.latest();
+        console.log('Migrations up to date');
+    } catch (err) {
+        console.error('Migration error:', err);
+    }
     // Start background job for score updates
     startScoreUpdater();
 });

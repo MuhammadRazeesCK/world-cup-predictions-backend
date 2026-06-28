@@ -8,7 +8,7 @@ const router = Router();
 // POST /api/predictions - Submit or update prediction
 router.post('/', authenticateToken, async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.sub;
-    const { fixture_id, predicted_home_goals, predicted_away_goals } = req.body;
+    const { fixture_id, predicted_home_goals, predicted_away_goals, penalty_home_goals, penalty_away_goals } = req.body;
 
     if (!fixture_id) {
         res.status(400).json({ success: false, error: 'fixture_id is required', code: 'VALIDATION_ERROR' });
@@ -37,6 +37,43 @@ router.post('/', authenticateToken, async (req: Request, res: Response): Promise
             return;
         }
 
+        // Block draws in knockout stages without penalty data
+        const KNOCKOUT_STAGES = ['round32', 'round16', 'qf', 'sf', 'third_place', 'final'];
+        const isKnockout = KNOCKOUT_STAGES.includes(fixture.stage);
+        const isDraw = home === away;
+
+        if (isKnockout && isDraw && !fixture.penalty_enabled) {
+            res.status(400).json({
+                success: false,
+                error: 'Draws are not allowed in this knockout match',
+                code: 'VALIDATION_ERROR',
+            });
+            return;
+        }
+
+        // Validate penalty goals when draw in penalty-enabled knockout
+        const penHome = penalty_home_goals !== undefined ? Number(penalty_home_goals) : null;
+        const penAway = penalty_away_goals !== undefined ? Number(penalty_away_goals) : null;
+
+        if (isKnockout && isDraw && fixture.penalty_enabled) {
+            if (penHome === null || penAway === null) {
+                res.status(400).json({
+                    success: false,
+                    error: 'Penalty shootout prediction required for drawn knockout matches',
+                    code: 'VALIDATION_ERROR',
+                });
+                return;
+            }
+            if (penHome === penAway) {
+                res.status(400).json({
+                    success: false,
+                    error: 'Penalty shootout cannot end in a draw',
+                    code: 'VALIDATION_ERROR',
+                });
+                return;
+            }
+        }
+
         // Check prediction window
         if (new Date() > new Date(fixture.prediction_closes_at)) {
             res.status(400).json({
@@ -60,6 +97,8 @@ router.post('/', authenticateToken, async (req: Request, res: Response): Promise
                 .update({
                     predicted_home_goals: home,
                     predicted_away_goals: away,
+                    penalty_home_goals: isKnockout && isDraw && fixture.penalty_enabled ? penHome : null,
+                    penalty_away_goals: isKnockout && isDraw && fixture.penalty_enabled ? penAway : null,
                     updated_at: new Date(),
                 })
                 .returning('*');
@@ -77,6 +116,8 @@ router.post('/', authenticateToken, async (req: Request, res: Response): Promise
                     fixture_id,
                     predicted_home_goals: home,
                     predicted_away_goals: away,
+                    penalty_home_goals: isKnockout && isDraw && fixture.penalty_enabled ? penHome : null,
+                    penalty_away_goals: isKnockout && isDraw && fixture.penalty_enabled ? penAway : null,
                 })
                 .returning('*');
 

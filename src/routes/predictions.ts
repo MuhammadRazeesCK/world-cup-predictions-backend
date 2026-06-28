@@ -160,6 +160,8 @@ router.get('/history', authenticateToken, async (req: Request, res: Response): P
                 'p.id',
                 'p.predicted_home_goals',
                 'p.predicted_away_goals',
+                'p.penalty_home_goals',
+                'p.penalty_away_goals',
                 'p.points',
                 'p.result',
                 'p.predicted_at',

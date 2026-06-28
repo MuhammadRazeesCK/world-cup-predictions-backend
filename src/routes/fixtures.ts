@@ -70,6 +70,8 @@ router.get('/available', authenticateToken, async (req: Request, res: Response):
                         id: userPred.id,
                         predicted_home_goals: userPred.predicted_home_goals,
                         predicted_away_goals: userPred.predicted_away_goals,
+                        penalty_home_goals: userPred.penalty_home_goals ?? null,
+                        penalty_away_goals: userPred.penalty_away_goals ?? null,
                         predicted_at: userPred.predicted_at,
                     }
                     : null,

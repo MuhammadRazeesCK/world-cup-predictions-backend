@@ -11,7 +11,7 @@ import { requireAdmin } from '../middleware/adminAuth';
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
-const VALID_STAGES = ['group', 'round16', 'qf', 'sf', 'final'];
+const VALID_STAGES = ['group', 'round32', 'round16', 'qf', 'sf', 'third_place', 'final'];
 
 function calcPredictionCloseTime(kickoffTime: string): Date {
     return DateTime.fromISO(kickoffTime).minus({ minutes: 30 }).toJSDate();
@@ -120,7 +120,7 @@ router.post('/fixtures/bulk-upload', upload.single('file'), async (req: Request,
 
 // POST /api/admin/fixtures - Create single fixture
 router.post('/fixtures', async (req: Request, res: Response): Promise<void> => {
-    const { match_number, home_team, away_team, kickoff_time, stage } = req.body;
+    const { match_number, home_team, away_team, kickoff_time, stage, penalty_enabled } = req.body;
 
     if (!match_number || !home_team || !away_team || !kickoff_time || !stage) {
         res.status(400).json({ success: false, error: 'All fields are required', code: 'VALIDATION_ERROR' });
@@ -128,8 +128,8 @@ router.post('/fixtures', async (req: Request, res: Response): Promise<void> => {
     }
 
     const matchNum = parseInt(String(match_number), 10);
-    if (isNaN(matchNum) || matchNum < 1 || matchNum > 64) {
-        res.status(400).json({ success: false, error: 'match_number must be between 1 and 64', code: 'VALIDATION_ERROR' });
+    if (isNaN(matchNum) || matchNum < 1) {
+        res.status(400).json({ success: false, error: 'match_number must be a positive integer', code: 'VALIDATION_ERROR' });
         return;
     }
 
@@ -158,6 +158,7 @@ router.post('/fixtures', async (req: Request, res: Response): Promise<void> => {
                 kickoff_time: DateTime.fromISO(kickoff_time).toJSDate(),
                 stage,
                 status: 'scheduled',
+                penalty_enabled: penalty_enabled === true || penalty_enabled === 'true',
                 prediction_closes_at: calcPredictionCloseTime(kickoff_time),
             })
             .returning('*');
@@ -216,6 +217,24 @@ router.put('/fixtures/:id', async (req: Request, res: Response): Promise<void> =
             updates.away_score = as_;
         }
 
+        // Penalty score for completed penalty-enabled fixtures
+        if (req.body.penalty_home_score !== undefined || req.body.penalty_away_score !== undefined) {
+            const phs = req.body.penalty_home_score === null ? null : parseInt(String(req.body.penalty_home_score), 10);
+            const pas = req.body.penalty_away_score === null ? null : parseInt(String(req.body.penalty_away_score), 10);
+            if (phs !== null && pas !== null) {
+                if (isNaN(phs) || isNaN(pas) || phs < 0 || pas < 0) {
+                    res.status(400).json({ success: false, error: 'Invalid penalty scores', code: 'VALIDATION_ERROR' });
+                    return;
+                }
+                if (phs === pas) {
+                    res.status(400).json({ success: false, error: 'Penalty score cannot be a draw', code: 'VALIDATION_ERROR' });
+                    return;
+                }
+            }
+            updates.penalty_home_score = phs;
+            updates.penalty_away_score = pas;
+        }
+
         const [updated] = await db('fixtures').where({ id }).update(updates).returning('*');
         await logAdminAction(req.user!.sub, 'fixture_updated', { fixture_id: id, changes: updates });
 
@@ -225,10 +244,17 @@ router.put('/fixtures/:id', async (req: Request, res: Response): Promise<void> =
                 .where({ fixture_id: id })
                 .whereNull('result')
                 .select('*');
+            const actualPenalty = (updated.penalty_enabled && updated.penalty_home_score !== null && updated.penalty_away_score !== null)
+                ? { home: updated.penalty_home_score, away: updated.penalty_away_score } : null;
             for (const pred of preds) {
+                const predictedPenalty = (pred.penalty_home_goals !== null && pred.penalty_away_goals !== null)
+                    ? { home: pred.penalty_home_goals, away: pred.penalty_away_goals } : null;
                 const { points, resultType } = calculatePoints(
                     { home: pred.predicted_home_goals, away: pred.predicted_away_goals },
-                    { home: updated.home_score, away: updated.away_score }
+                    { home: updated.home_score, away: updated.away_score },
+                    updated.penalty_enabled,
+                    predictedPenalty,
+                    actualPenalty,
                 );
                 await db('predictions').where({ id: pred.id }).update({ points, result: resultType, updated_at: new Date() });
             }
@@ -430,10 +456,17 @@ router.post('/fixtures/:id/rescore', async (req: Request, res: Response): Promis
             return;
         }
         const preds = await db('predictions').where({ fixture_id: id }).select('*');
+        const actualPenalty = (fixture.penalty_enabled && fixture.penalty_home_score !== null && fixture.penalty_away_score !== null)
+            ? { home: fixture.penalty_home_score, away: fixture.penalty_away_score } : null;
         for (const pred of preds) {
+            const predictedPenalty = (pred.penalty_home_goals !== null && pred.penalty_away_goals !== null)
+                ? { home: pred.penalty_home_goals, away: pred.penalty_away_goals } : null;
             const { points, resultType } = calculatePoints(
                 { home: pred.predicted_home_goals, away: pred.predicted_away_goals },
-                { home: fixture.home_score, away: fixture.away_score }
+                { home: fixture.home_score, away: fixture.away_score },
+                fixture.penalty_enabled,
+                predictedPenalty,
+                actualPenalty,
             );
             await db('predictions').where({ id: pred.id }).update({ points, result: resultType, updated_at: new Date() });
         }
@@ -466,6 +499,8 @@ router.get('/predictions', async (_req: Request, res: Response): Promise<void> =
                     'u.username',
                     'p.predicted_home_goals as home_goals',
                     'p.predicted_away_goals as away_goals',
+                    'p.penalty_home_goals as pen_home_goals',
+                    'p.penalty_away_goals as pen_away_goals',
                     'p.result',
                     'p.points',
                     'p.predicted_at',
@@ -501,6 +536,8 @@ router.get('/predictions', async (_req: Request, res: Response): Promise<void> =
                 username: row.username,
                 home_goals: row.home_goals,
                 away_goals: row.away_goals,
+                pen_home_goals: row.pen_home_goals ?? null,
+                pen_away_goals: row.pen_away_goals ?? null,
                 result: row.result,
                 points: row.points,
                 predicted_at: row.predicted_at,

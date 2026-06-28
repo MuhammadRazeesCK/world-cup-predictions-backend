@@ -77,13 +77,30 @@ import db from './db';
 app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
     try {
-        // Add avatar_url column if it doesn't exist yet
-        const hasCol = await db.schema.hasColumn('users', 'avatar_url');
-        if (!hasCol) {
-            await db.schema.alterTable('users', (t) => {
-                t.text('avatar_url').nullable().defaultTo(null);
-            });
+        // avatar_url on users
+        const hasAvatar = await db.schema.hasColumn('users', 'avatar_url');
+        if (!hasAvatar) {
+            await db.schema.alterTable('users', (t) => { t.text('avatar_url').nullable().defaultTo(null); });
             console.log('Migrated: added avatar_url to users');
+        }
+        // penalty_enabled, penalty_home_score, penalty_away_score on fixtures
+        const hasPenEnabled = await db.schema.hasColumn('fixtures', 'penalty_enabled');
+        if (!hasPenEnabled) {
+            await db.schema.alterTable('fixtures', (t) => {
+                t.boolean('penalty_enabled').notNullable().defaultTo(false);
+                t.integer('penalty_home_score').nullable();
+                t.integer('penalty_away_score').nullable();
+            });
+            console.log('Migrated: added penalty columns to fixtures');
+        }
+        // penalty_home_goals, penalty_away_goals on predictions
+        const hasPenGoals = await db.schema.hasColumn('predictions', 'penalty_home_goals');
+        if (!hasPenGoals) {
+            await db.schema.alterTable('predictions', (t) => {
+                t.integer('penalty_home_goals').nullable();
+                t.integer('penalty_away_goals').nullable();
+            });
+            console.log('Migrated: added penalty columns to predictions');
         }
     } catch (err) {
         console.error('Startup migration error:', err);

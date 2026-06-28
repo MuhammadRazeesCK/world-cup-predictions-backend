@@ -46,9 +46,16 @@ async function updateCompletedMatches(): Promise<void> {
                         .select('*');
 
                     for (const pred of predictions) {
+                        const actualPenalty = (match.penalty_enabled && match.penalty_home_score !== null && match.penalty_away_score !== null)
+                            ? { home: match.penalty_home_score, away: match.penalty_away_score } : null;
+                        const predictedPenalty = (pred.penalty_home_goals !== null && pred.penalty_away_goals !== null)
+                            ? { home: pred.penalty_home_goals, away: pred.penalty_away_goals } : null;
                         const { points, resultType } = calculatePoints(
                             { home: pred.predicted_home_goals, away: pred.predicted_away_goals },
-                            { home: externalScore.homeGoals, away: externalScore.awayGoals }
+                            { home: externalScore.homeGoals, away: externalScore.awayGoals },
+                            match.penalty_enabled,
+                            predictedPenalty,
+                            actualPenalty,
                         );
 
                         await db('predictions').where({ id: pred.id }).update({

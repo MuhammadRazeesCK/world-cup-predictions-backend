@@ -102,6 +102,16 @@ app.listen(PORT, async () => {
             });
             console.log('Migrated: added penalty columns to predictions');
         }
+        // Fix constraints: remove match_number <= 64 cap and add round32/third_place to valid_stage
+        try {
+            await db.raw(`ALTER TABLE fixtures DROP CONSTRAINT IF EXISTS valid_match_number`);
+            await db.raw(`ALTER TABLE fixtures ADD CONSTRAINT valid_match_number CHECK (match_number >= 1)`);
+            await db.raw(`ALTER TABLE fixtures DROP CONSTRAINT IF EXISTS valid_stage`);
+            await db.raw(`ALTER TABLE fixtures ADD CONSTRAINT valid_stage CHECK (stage IN ('group','round32','round16','qf','sf','third_place','final'))`);
+            console.log('Migrated: updated match_number and stage constraints');
+        } catch (constraintErr) {
+            console.error('Constraint migration error (non-fatal):', constraintErr);
+        }
     } catch (err) {
         console.error('Startup migration error:', err);
     }

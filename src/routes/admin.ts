@@ -301,6 +301,44 @@ router.delete('/fixtures/:id', async (req: Request, res: Response): Promise<void
     }
 });
 
+// POST /api/admin/fixtures/:id/poster - Upload match poster image
+router.post('/fixtures/:id/poster', upload.single('poster'), async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    if (!req.file) {
+        res.status(400).json({ success: false, error: 'No image uploaded', code: 'VALIDATION_ERROR' });
+        return;
+    }
+    try {
+        const sharp = (await import('sharp')).default;
+        const compressed = await sharp(req.file.buffer)
+            .resize({ width: 900, withoutEnlargement: true })
+            .webp({ quality: 78 })
+            .toBuffer();
+        const poster_url = `data:image/webp;base64,${compressed.toString('base64')}`;
+        const [fixture] = await db('fixtures').where({ id }).update({ poster_url }).returning('*');
+        if (!fixture) {
+            res.status(404).json({ success: false, error: 'Fixture not found', code: 'NOT_FOUND' });
+            return;
+        }
+        await logAdminAction(req.user!.sub, 'fixture_poster_uploaded', { fixture_id: id });
+        res.json({ success: true, data: { poster_url } });
+    } catch (err) {
+        console.error('Poster upload error:', err);
+        res.status(500).json({ success: false, error: 'Failed to upload poster', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// DELETE /api/admin/fixtures/:id/poster - Remove match poster
+router.delete('/fixtures/:id/poster', async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    try {
+        await db('fixtures').where({ id }).update({ poster_url: null });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Failed to remove poster', code: 'INTERNAL_ERROR' });
+    }
+});
+
 // GET /api/admin/fixtures - List all fixtures with prediction counts
 router.get('/fixtures', async (_req: Request, res: Response): Promise<void> => {
     try {

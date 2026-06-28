@@ -102,6 +102,12 @@ app.listen(PORT, async () => {
             });
             console.log('Migrated: added penalty columns to predictions');
         }
+        // poster_url on fixtures
+        const hasPosterUrl = await db.schema.hasColumn('fixtures', 'poster_url');
+        if (!hasPosterUrl) {
+            await db.schema.alterTable('fixtures', (t) => { t.text('poster_url').nullable().defaultTo(null); });
+            console.log('Migrated: added poster_url to fixtures');
+        }
         // Fix constraints: remove match_number <= 64 cap and add round32/third_place to valid_stage
         try {
             await db.raw(`ALTER TABLE fixtures DROP CONSTRAINT IF EXISTS valid_match_number`);

@@ -188,6 +188,8 @@ router.get('/history', authenticateToken, async (req: Request, res: Response): P
             prediction: {
                 predicted_home_goals: r.predicted_home_goals,
                 predicted_away_goals: r.predicted_away_goals,
+                penalty_home_goals: r.penalty_home_goals ?? null,
+                penalty_away_goals: r.penalty_away_goals ?? null,
                 predicted_at: r.predicted_at,
             },
             result:

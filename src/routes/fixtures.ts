@@ -36,7 +36,10 @@ router.get('/available', authenticateToken, async (req: Request, res: Response):
         const twoDaysLater = now.plus({ days: 2 });
 
         const fixtures = await db('fixtures')
-            .whereBetween('kickoff_time', [now.toJSDate(), twoDaysLater.toJSDate()])
+            .where(function () {
+                this.whereBetween('kickoff_time', [now.toJSDate(), twoDaysLater.toJSDate()])
+                    .orWhere('status', 'live');
+            })
             .whereIn('status', ['scheduled', 'live'])
             .orderBy('kickoff_time', 'asc')
             .select('*');

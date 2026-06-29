@@ -237,6 +237,8 @@ router.get('/history/user/:username', authenticateToken, async (req: Request, re
                 'p.id',
                 'p.predicted_home_goals',
                 'p.predicted_away_goals',
+                'p.penalty_home_goals',
+                'p.penalty_away_goals',
                 'p.points',
                 'p.result',
                 'f.id as fixture_id',
@@ -264,6 +266,8 @@ router.get('/history/user/:username', authenticateToken, async (req: Request, re
             prediction: {
                 predicted_home_goals: r.predicted_home_goals,
                 predicted_away_goals: r.predicted_away_goals,
+                penalty_home_goals: r.penalty_home_goals ?? null,
+                penalty_away_goals: r.penalty_away_goals ?? null,
                 predicted_at: null,
             },
             result: {

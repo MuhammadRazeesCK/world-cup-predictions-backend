@@ -14,7 +14,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 const VALID_STAGES = ['group', 'round32', 'round16', 'qf', 'sf', 'third_place', 'final'];
 
 function calcPredictionCloseTime(kickoffTime: string): Date {
-    return DateTime.fromISO(kickoffTime).minus({ minutes: 30 }).toJSDate();
+    return DateTime.fromISO(kickoffTime).minus({ minutes: 15 }).toJSDate();
 }
 
 async function logAdminAction(adminId: string, action: string, details: Record<string, unknown>): Promise<void> {

@@ -41,7 +41,7 @@ export interface Fixture {
     updated_at: Date;
 }
 
-export type PredictionResult = 'exact' | 'winner' | 'wrong';
+export type PredictionResult = 'exact' | 'winner' | 'wrong' | 'draw_correct';
 
 export interface Prediction {
     id: string;

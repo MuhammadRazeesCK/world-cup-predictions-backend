@@ -56,6 +56,12 @@ export function calculatePoints(
         return { points: 3, resultType: 'winner' };
     }
 
+    // --- Draw correct: predicted the right draw scoreline but wrong penalty winner ---
+    // Reward for hanging in for 120 minutes (correct 90-min score, penalties went the other way)
+    if (matchScoreExact && penaltiesPlayed) {
+        return { points: 2, resultType: 'draw_correct' };
+    }
+
     return { points: 0, resultType: 'wrong' };
 }
 

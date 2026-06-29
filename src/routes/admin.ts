@@ -598,4 +598,51 @@ router.get('/predictions', async (_req: Request, res: Response): Promise<void> =
     }
 });
 
+// POST /api/admin/announcement — create/replace the active announcement (image optional, message optional)
+router.post('/announcement', upload.single('image'), async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { message } = req.body;
+        let imageUrl: string | null = null;
+
+        if (req.file) {
+            const sharp = (await import('sharp')).default;
+            const webp = await sharp(req.file.buffer)
+                .resize({ width: 900, withoutEnlargement: true })
+                .webp({ quality: 78 })
+                .toBuffer();
+            imageUrl = `data:image/webp;base64,${webp.toString('base64')}`;
+        }
+
+        if (!imageUrl && !message?.trim()) {
+            res.status(400).json({ success: false, error: 'Provide an image or message', code: 'VALIDATION_ERROR' });
+            return;
+        }
+
+        // Replace: delete all previous announcements, insert new one
+        await db('announcements').delete();
+        const [row] = await db('announcements').insert({
+            image_url: imageUrl,
+            message: message?.trim() || null,
+        }).returning('*');
+
+        await logAdminAction(req.user!.sub, 'announcement_set', { message: message?.trim() || null, has_image: !!imageUrl });
+        res.json({ success: true, data: row });
+    } catch (err) {
+        console.error('Set announcement error:', err);
+        res.status(500).json({ success: false, error: 'Failed to set announcement', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// DELETE /api/admin/announcement — clear the active announcement
+router.delete('/announcement', async (req: Request, res: Response): Promise<void> => {
+    try {
+        await db('announcements').delete();
+        await logAdminAction(req.user!.sub, 'announcement_cleared', {});
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Clear announcement error:', err);
+        res.status(500).json({ success: false, error: 'Failed to clear announcement', code: 'INTERNAL_ERROR' });
+    }
+});
+
 export default router;

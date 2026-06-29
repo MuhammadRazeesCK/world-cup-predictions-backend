@@ -10,6 +10,7 @@ import predictionRoutes from './routes/predictions';
 import leaderboardRoutes from './routes/leaderboard';
 import adminRoutes from './routes/admin';
 import userRoutes from './routes/users';
+import announcementRoutes from './routes/announcements';
 import { startScoreUpdater } from './jobs/scoreUpdater';
 
 dotenv.config();
@@ -60,6 +61,7 @@ app.use('/api/predictions', predictionRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/announcements', announcementRoutes);
 
 // 404 handler
 app.use((_req, res) => {
@@ -107,6 +109,17 @@ app.listen(PORT, async () => {
         if (!hasPosterUrl) {
             await db.schema.alterTable('fixtures', (t) => { t.text('poster_url').nullable().defaultTo(null); });
             console.log('Migrated: added poster_url to fixtures');
+        }
+        // announcements table
+        const hasAnnouncementsTable = await db.schema.hasTable('announcements');
+        if (!hasAnnouncementsTable) {
+            await db.schema.createTable('announcements', (t) => {
+                t.increments('id').primary();
+                t.text('image_url').nullable();
+                t.text('message').nullable();
+                t.timestamp('created_at').defaultTo(db.fn.now());
+            });
+            console.log('Migrated: created announcements table');
         }
         // Fix constraints: remove match_number <= 64 cap and add round32/third_place to valid_stage
         try {

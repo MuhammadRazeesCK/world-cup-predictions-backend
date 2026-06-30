@@ -533,6 +533,8 @@ router.get('/predictions', async (_req: Request, res: Response): Promise<void> =
                     'f.status',
                     'f.home_score',
                     'f.away_score',
+                    'f.penalty_home_score',
+                    'f.penalty_away_score',
                     'p.id as prediction_id',
                     'u.username',
                     'p.predicted_home_goals as home_goals',
@@ -565,6 +567,8 @@ router.get('/predictions', async (_req: Request, res: Response): Promise<void> =
                         status: row.status,
                         home_score: row.home_score,
                         away_score: row.away_score,
+                        penalty_home_score: row.penalty_home_score ?? null,
+                        penalty_away_score: row.penalty_away_score ?? null,
                     },
                     predictions: [],
                 });

@@ -173,7 +173,9 @@ router.get('/history', authenticateToken, async (req: Request, res: Response): P
                 'f.stage',
                 'f.status',
                 'f.home_score',
-                'f.away_score'
+                'f.away_score',
+                'f.penalty_home_score',
+                'f.penalty_away_score'
             );
 
         const predictions = rows.map((r) => ({
@@ -199,6 +201,8 @@ router.get('/history', authenticateToken, async (req: Request, res: Response): P
                     ? {
                         home_goals: r.home_score,
                         away_goals: r.away_score,
+                        penalty_home_score: r.penalty_home_score ?? null,
+                        penalty_away_score: r.penalty_away_score ?? null,
                         points: r.points,
                         result_type: r.result,
                     }
@@ -249,7 +253,9 @@ router.get('/history/user/:username', authenticateToken, async (req: Request, re
                 'f.stage',
                 'f.status',
                 'f.home_score',
-                'f.away_score'
+                'f.away_score',
+                'f.penalty_home_score',
+                'f.penalty_away_score'
             );
 
         const predictions = rows.map((r) => ({
@@ -273,6 +279,8 @@ router.get('/history/user/:username', authenticateToken, async (req: Request, re
             result: {
                 home_goals: r.home_score,
                 away_goals: r.away_score,
+                penalty_home_score: r.penalty_home_score ?? null,
+                penalty_away_score: r.penalty_away_score ?? null,
                 points: r.points,
                 result_type: r.result,
             },

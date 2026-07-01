@@ -9,57 +9,54 @@ interface CacheEntry {
 const scoreCache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 
-// Status mappings from api-football.com
-const FINISHED_STATUSES = ['FT', 'AET', 'PEN'];
-const LIVE_STATUSES = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'SUSP', 'INT', 'LIVE'];
+const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world';
 
-export async function getFixtureScore(apiFixtureId: number): Promise<FootballAPIScore | null> {
-    const cacheKey = String(apiFixtureId);
+export async function getFixtureScore(espnEventId: number): Promise<FootballAPIScore | null> {
+    const cacheKey = String(espnEventId);
     const cached = scoreCache.get(cacheKey);
 
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
         return cached.data;
     }
 
-    const apiKey = process.env.API_FOOTBALL_KEY;
-    const baseUrl = process.env.API_FOOTBALL_BASE_URL || 'https://v3.football.api-sports.io';
-
-    if (!apiKey) {
-        console.warn('API_FOOTBALL_KEY not configured');
-        return null;
-    }
-
     try {
-        const response = await axios.get(`${baseUrl}/fixtures`, {
-            headers: {
-                'x-rapidapi-key': apiKey,
-                'x-rapidapi-host': 'v3.football.api-sports.io',
-            },
-            params: { id: apiFixtureId },
+        const response = await axios.get(`${ESPN_BASE}/summary`, {
+            params: { event: espnEventId },
             timeout: 10000,
         });
 
-        const fixture = response.data?.response?.[0];
-        if (!fixture) return null;
+        // ESPN summary returns header.competitions[0]
+        const comp = response.data?.header?.competitions?.[0];
+        if (!comp) return null;
 
-        const status = fixture.fixture?.status?.short;
-        const homeGoals = fixture.goals?.home;
-        const awayGoals = fixture.goals?.away;
+        const state: string = comp.status?.type?.state ?? 'pre'; // "pre" | "in" | "post"
+        const competitors: any[] = comp.competitors ?? [];
+        const home = competitors.find((c: any) => c.homeAway === 'home');
+        const away = competitors.find((c: any) => c.homeAway === 'away');
+
+        const homeGoals = home ? parseInt(home.score, 10) : null;
+        const awayGoals = away ? parseInt(away.score, 10) : null;
+        const shootoutHomeGoals = home?.shootoutScore != null ? parseInt(home.shootoutScore, 10) : null;
+        const shootoutAwayGoals = away?.shootoutScore != null ? parseInt(away.shootoutScore, 10) : null;
 
         const result: FootballAPIScore = {
-            status: FINISHED_STATUSES.includes(status)
+            status: state === 'post'
                 ? 'MATCH_FINISHED'
-                : LIVE_STATUSES.includes(status)
+                : state === 'in'
                     ? 'MATCH_LIVE'
                     : 'MATCH_SCHEDULED',
-            homeGoals: homeGoals ?? null,
-            awayGoals: awayGoals ?? null,
+            homeGoals: isNaN(homeGoals as number) ? null : homeGoals,
+            awayGoals: isNaN(awayGoals as number) ? null : awayGoals,
+            espnHomeTeam: home?.team?.displayName ?? null,
+            espnAwayTeam: away?.team?.displayName ?? null,
+            shootoutHomeGoals: (shootoutHomeGoals !== null && !isNaN(shootoutHomeGoals)) ? shootoutHomeGoals : null,
+            shootoutAwayGoals: (shootoutAwayGoals !== null && !isNaN(shootoutAwayGoals)) ? shootoutAwayGoals : null,
         };
 
         scoreCache.set(cacheKey, { data: result, timestamp: Date.now() });
         return result;
     } catch (err) {
-        console.error(`Failed to fetch score for fixture ${apiFixtureId}:`, err);
+        console.error(`ESPN: Failed to fetch score for event ${espnEventId}:`, err);
         return null;
     }
 }

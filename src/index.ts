@@ -131,6 +131,15 @@ app.listen(PORT, async () => {
         } catch (constraintErr) {
             console.error('Constraint migration error (non-fatal):', constraintErr);
         }
+
+        // Add draw_correct to valid_result constraint
+        try {
+            await db.raw(`ALTER TABLE predictions DROP CONSTRAINT IF EXISTS valid_result`);
+            await db.raw(`ALTER TABLE predictions ADD CONSTRAINT valid_result CHECK (result IS NULL OR result IN ('exact', 'winner', 'wrong', 'draw_correct'))`);
+            console.log('Migrated: valid_result constraint includes draw_correct');
+        } catch (constraintErr) {
+            console.error('valid_result constraint migration error (non-fatal):', constraintErr);
+        }
     } catch (err) {
         console.error('Startup migration error:', err);
     }

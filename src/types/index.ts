@@ -94,4 +94,8 @@ export interface FootballAPIScore {
     status: string;
     homeGoals: number | null;
     awayGoals: number | null;
+    espnHomeTeam: string | null;
+    espnAwayTeam: string | null;
+    shootoutHomeGoals: number | null;
+    shootoutAwayGoals: number | null;
 }

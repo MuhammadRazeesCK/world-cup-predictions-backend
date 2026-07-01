@@ -120,7 +120,7 @@ router.post('/fixtures/bulk-upload', upload.single('file'), async (req: Request,
 
 // POST /api/admin/fixtures - Create single fixture
 router.post('/fixtures', async (req: Request, res: Response): Promise<void> => {
-    const { match_number, home_team, away_team, kickoff_time, stage, penalty_enabled } = req.body;
+    const { match_number, home_team, away_team, kickoff_time, stage, penalty_enabled, api_fixture_id } = req.body;
 
     if (!match_number || !home_team || !away_team || !kickoff_time || !stage) {
         res.status(400).json({ success: false, error: 'All fields are required', code: 'VALIDATION_ERROR' });
@@ -160,6 +160,7 @@ router.post('/fixtures', async (req: Request, res: Response): Promise<void> => {
                 status: 'scheduled',
                 penalty_enabled: penalty_enabled === true || penalty_enabled === 'true',
                 prediction_closes_at: calcPredictionCloseTime(kickoff_time),
+                ...(api_fixture_id != null && api_fixture_id !== '' && { api_fixture_id: parseInt(String(api_fixture_id), 10) }),
             })
             .returning('*');
 
@@ -175,7 +176,7 @@ router.post('/fixtures', async (req: Request, res: Response): Promise<void> => {
 // PUT /api/admin/fixtures/:id - Update fixture
 router.put('/fixtures/:id', async (req: Request, res: Response): Promise<void> => {
     const { id } = req.params;
-    const { home_team, away_team, kickoff_time, stage, home_score, away_score, status } = req.body;
+    const { home_team, away_team, kickoff_time, stage, home_score, away_score, status, api_fixture_id } = req.body;
 
     try {
         const fixture = await db('fixtures').where({ id }).first();
@@ -196,6 +197,9 @@ router.put('/fixtures/:id', async (req: Request, res: Response): Promise<void> =
         if (away_team) updates.away_team = away_team.trim();
         if (stage && VALID_STAGES.includes(stage)) updates.stage = stage;
         if (status && ['scheduled', 'live', 'completed'].includes(status)) updates.status = status;
+        if (api_fixture_id !== undefined) {
+            updates.api_fixture_id = api_fixture_id === null || api_fixture_id === '' ? null : parseInt(String(api_fixture_id), 10);
+        }
 
         if (kickoff_time) {
             if (!DateTime.fromISO(kickoff_time).isValid) {
@@ -238,12 +242,12 @@ router.put('/fixtures/:id', async (req: Request, res: Response): Promise<void> =
         const [updated] = await db('fixtures').where({ id }).update(updates).returning('*');
         await logAdminAction(req.user!.sub, 'fixture_updated', { fixture_id: id, changes: updates });
 
-        // Auto-score all predictions when fixture is marked completed with scores
-        if (updated.status === 'completed' && updated.home_score !== null && updated.away_score !== null) {
-            const preds = await db('predictions')
-                .where({ fixture_id: id })
-                .whereNull('result')
-                .select('*');
+        // Auto-rescore ALL predictions when a completed fixture's scores are changed by admin
+        const scoresChanged = updates.home_score !== undefined || updates.away_score !== undefined
+            || updates.penalty_home_score !== undefined || updates.penalty_away_score !== undefined;
+
+        if (updated.status === 'completed' && updated.home_score !== null && updated.away_score !== null && scoresChanged) {
+            const preds = await db('predictions').where({ fixture_id: id }).select('*');
             const actualPenalty = (updated.penalty_enabled && updated.penalty_home_score !== null && updated.penalty_away_score !== null)
                 ? { home: updated.penalty_home_score, away: updated.penalty_away_score } : null;
             for (const pred of preds) {
@@ -258,13 +262,49 @@ router.put('/fixtures/:id', async (req: Request, res: Response): Promise<void> =
                 );
                 await db('predictions').where({ id: pred.id }).update({ points, result: resultType, updated_at: new Date() });
             }
-            console.log(`Auto-scored ${preds.length} predictions for fixture ${updated.match_number}`);
+            console.log(`Re-scored ${preds.length} predictions for fixture ${updated.match_number} after score correction`);
         }
 
         res.json({ success: true, data: updated });
     } catch (err) {
         console.error('Update fixture error:', err);
         res.status(500).json({ success: false, error: 'Failed to update fixture', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// POST /api/admin/fixtures/:id/rescore - Force re-score all predictions using current DB scores
+router.post('/fixtures/:id/rescore', async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    try {
+        const fixture = await db('fixtures').where({ id }).first();
+        if (!fixture) {
+            res.status(404).json({ success: false, error: 'Fixture not found', code: 'NOT_FOUND' });
+            return;
+        }
+        if (fixture.status !== 'completed' || fixture.home_score === null || fixture.away_score === null) {
+            res.status(400).json({ success: false, error: 'Fixture must be completed with scores set', code: 'VALIDATION_ERROR' });
+            return;
+        }
+        const preds = await db('predictions').where({ fixture_id: id }).select('*');
+        const actualPenalty = (fixture.penalty_enabled && fixture.penalty_home_score !== null && fixture.penalty_away_score !== null)
+            ? { home: fixture.penalty_home_score, away: fixture.penalty_away_score } : null;
+        for (const pred of preds) {
+            const predictedPenalty = (pred.penalty_home_goals !== null && pred.penalty_away_goals !== null)
+                ? { home: pred.penalty_home_goals, away: pred.penalty_away_goals } : null;
+            const { points, resultType } = calculatePoints(
+                { home: pred.predicted_home_goals, away: pred.predicted_away_goals },
+                { home: fixture.home_score, away: fixture.away_score },
+                fixture.penalty_enabled,
+                predictedPenalty,
+                actualPenalty,
+            );
+            await db('predictions').where({ id: pred.id }).update({ points, result: resultType, updated_at: new Date() });
+        }
+        await logAdminAction(req.user!.sub, 'fixture_rescored', { fixture_id: id, predictions_rescored: preds.length });
+        res.json({ success: true, message: `Re-scored ${preds.length} predictions`, data: { rescored: preds.length } });
+    } catch (err) {
+        console.error('Rescore error:', err);
+        res.status(500).json({ success: false, error: 'Failed to rescore', code: 'INTERNAL_ERROR' });
     }
 });
 

@@ -37,7 +37,9 @@ router.get('/available', authenticateToken, async (req: Request, res: Response):
         const userId = req.user!.sub;
         const now = DateTime.now().setZone('Asia/Kolkata');
         const twoDaysLater = now.plus({ days: 2 });
-        const twelveHoursAgo = now.minus({ hours: 12 });
+        // 14h back from now = up to 12h post-match display (2h match + 12h window)
+        // Use kickoff_time so admin edits never reset the clock
+        const kickoffCutoff = now.minus({ hours: 14 });
 
         const fixtures = await db('fixtures')
             .where(function () {
@@ -48,10 +50,10 @@ router.get('/available', authenticateToken, async (req: Request, res: Response):
                 })
                 // Currently live
                 .orWhere('status', 'live')
-                // Completed within last 12 hours (keep on dashboard for result display)
+                // Completed within ~14h of kickoff (keeps result visible for ~12h post-match)
                 .orWhere(function () {
                     this.where('status', 'completed')
-                        .where('updated_at', '>=', twelveHoursAgo.toJSDate());
+                        .where('kickoff_time', '>=', kickoffCutoff.toJSDate());
                 });
             })
             .orderBy('kickoff_time', 'asc')

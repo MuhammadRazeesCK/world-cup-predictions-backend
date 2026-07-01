@@ -145,9 +145,10 @@ router.get('/:id/live-data', async (req: Request, res: Response): Promise<void> 
         const homeId = competitors.find((c: any) => c.homeAway === 'home')?.id;
 
         // ESPN uses keyEvents (not plays) for soccer
+        // Accept all scoring plays (Goal, Penalty, etc.) — type.text varies
         const keyEvents: any[] = response.data?.keyEvents ?? [];
         const scorers = keyEvents
-            .filter((e: any) => e.scoringPlay === true && e.type?.text === 'Goal')
+            .filter((e: any) => e.scoringPlay === true)
             .map((e: any) => {
                 // Text format: "Goal! Home 0, Away 1. Scorer Name (Team) description..."
                 const text: string = e.text ?? '';

@@ -14,7 +14,7 @@ import announcementRoutes from './routes/announcements';
 import { startScoreUpdater } from './jobs/scoreUpdater';
 import { startPredictionCloseNotifier } from './jobs/predictionCloseNotifier';
 import { initWhatsApp } from './services/whatsapp';
-import { requestLogger } from './middleware/requestLogger';
+import { requestLogger, startRequestLogCleanup } from './middleware/requestLogger';
 import monitoringRoutes from './routes/monitoring';
 
 dotenv.config();
@@ -157,11 +157,29 @@ app.listen(PORT, async () => {
         if (!hasServerEvents) {
             await db.schema.createTable('server_events', (t) => {
                 t.increments('id').primary();
-                t.string('type', 50).notNullable(); // 'startup'
+                t.string('type', 50).notNullable();
                 t.jsonb('metadata').nullable();
                 t.timestamp('created_at').defaultTo(db.fn.now());
             });
             console.log('Migrated: created server_events table');
+        }
+        // request_logs table for persistent user activity tracking
+        const hasRequestLogs = await db.schema.hasTable('request_logs');
+        if (!hasRequestLogs) {
+            await db.schema.createTable('request_logs', (t) => {
+                t.increments('id').primary();
+                t.timestamp('timestamp').notNullable().defaultTo(db.fn.now());
+                t.string('method', 10).nullable();
+                t.text('path').nullable();
+                t.integer('status').nullable();
+                t.integer('duration_ms').nullable();
+                t.string('ip', 45).nullable();
+                t.string('username', 100).nullable();
+                t.string('role', 20).nullable();
+            });
+            await db.raw('CREATE INDEX ON request_logs(timestamp)');
+            await db.raw('CREATE INDEX ON request_logs(username)');
+            console.log('Migrated: created request_logs table');
         }
     } catch (err) {
         console.error('Startup migration error:', err);
@@ -178,6 +196,8 @@ app.listen(PORT, async () => {
     // Start WhatsApp prediction-close notifier (requires WHATSAPP_ENABLED=true)
     initWhatsApp();
     startPredictionCloseNotifier();
+    // Start hourly request log cleanup (keeps last 24h only)
+    startRequestLogCleanup();
 });
 
 export default app;

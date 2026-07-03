@@ -12,6 +12,10 @@ import adminRoutes from './routes/admin';
 import userRoutes from './routes/users';
 import announcementRoutes from './routes/announcements';
 import { startScoreUpdater } from './jobs/scoreUpdater';
+import { startPredictionCloseNotifier } from './jobs/predictionCloseNotifier';
+import { initWhatsApp } from './services/whatsapp';
+import { requestLogger } from './middleware/requestLogger';
+import monitoringRoutes from './routes/monitoring';
 
 dotenv.config();
 
@@ -44,6 +48,7 @@ app.use(
 if (process.env.NODE_ENV !== 'test') {
     app.use(morgan('combined'));
 }
+app.use(requestLogger);
 
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
@@ -62,6 +67,7 @@ app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/announcements', announcementRoutes);
+app.use('/api/admin/monitoring', monitoringRoutes);
 
 // 404 handler
 app.use((_req, res) => {
@@ -140,11 +146,38 @@ app.listen(PORT, async () => {
         } catch (constraintErr) {
             console.error('valid_result constraint migration error (non-fatal):', constraintErr);
         }
+        // whatsapp_notified_at on fixtures
+        const hasWhatsappNotified = await db.schema.hasColumn('fixtures', 'whatsapp_notified_at');
+        if (!hasWhatsappNotified) {
+            await db.schema.alterTable('fixtures', (t) => { t.timestamp('whatsapp_notified_at').nullable().defaultTo(null); });
+            console.log('Migrated: added whatsapp_notified_at to fixtures');
+        }
+        // server_events table for monitoring
+        const hasServerEvents = await db.schema.hasTable('server_events');
+        if (!hasServerEvents) {
+            await db.schema.createTable('server_events', (t) => {
+                t.increments('id').primary();
+                t.string('type', 50).notNullable(); // 'startup'
+                t.jsonb('metadata').nullable();
+                t.timestamp('created_at').defaultTo(db.fn.now());
+            });
+            console.log('Migrated: created server_events table');
+        }
     } catch (err) {
         console.error('Startup migration error:', err);
     }
+    // Log this startup
+    try {
+        await db('server_events').insert({
+            type: 'startup',
+            metadata: JSON.stringify({ nodeVersion: process.version, env: process.env.NODE_ENV }),
+        });
+    } catch (_) { /* non-fatal */ }
     // Start background job for score updates
     startScoreUpdater();
+    // Start WhatsApp prediction-close notifier (requires WHATSAPP_ENABLED=true)
+    initWhatsApp();
+    startPredictionCloseNotifier();
 });
 
 export default app;

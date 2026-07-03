@@ -19,16 +19,16 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
             .limit(20)
             .select('id', 'created_at', 'metadata');
 
-        // Enrich with inferred downtime between restarts
+        // Enrich with how long each startup instance ran before being replaced
         const history = startups.map((s, i) => {
-            const prev = startups[i + 1]; // older entry
-            const downtimeMs = prev
-                ? new Date(s.created_at).getTime() - new Date(prev.created_at).getTime() - (prev.metadata?.uptimeMs ?? 0)
-                : null;
+            const next = startups[i - 1]; // newer entry (array is newest-first)
+            const ranForMs = next
+                ? new Date(next.created_at).getTime() - new Date(s.created_at).getTime()
+                : null; // null = current (still running)
             return {
                 startedAt: s.created_at,
                 metadata: s.metadata,
-                inferredDowntimeMs: downtimeMs !== null && downtimeMs > 0 ? downtimeMs : null,
+                ranForMs,
             };
         });
 

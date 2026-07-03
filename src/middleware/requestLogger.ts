@@ -7,6 +7,8 @@ export interface RequestLogEntry {
     status: number;
     duration: number; // ms
     ip: string;
+    username: string | null;
+    role: string | null;
 }
 
 const MAX_ENTRIES = 100;
@@ -28,6 +30,8 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
             status: res.statusCode,
             duration: Date.now() - start,
             ip,
+            username: req.user?.username ?? null,
+            role: req.user?.role ?? null,
         };
         requestLog.push(entry);
         if (requestLog.length > MAX_ENTRIES) requestLog.shift();

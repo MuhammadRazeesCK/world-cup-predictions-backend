@@ -321,7 +321,7 @@ router.get('/locked-fixtures', authenticateToken, async (_req: Request, res: Res
                     db.raw('predictions.penalty_away_goals as pen_away_goals'),
                     'predictions.result',
                     'predictions.points',
-                    db.raw('predictions.created_at as predicted_at'),
+                    db.raw('predictions.updated_at as predicted_at'),
                 )
                 .orderBy('users.username', 'asc')
             : [];

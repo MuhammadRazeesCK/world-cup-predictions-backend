@@ -293,6 +293,69 @@ router.get('/history/user/:username', authenticateToken, async (req: Request, re
     }
 });
 
+// GET /api/predictions/locked-fixtures
+// Returns knockout (round16+) fixtures whose prediction window is closed, with all users' predictions.
+// Available to any authenticated user — safe to expose since predictions are locked.
+// IMPORTANT: must be declared BEFORE the /:fixture_id wildcard route.
+router.get('/locked-fixtures', authenticateToken, async (_req: Request, res: Response): Promise<void> => {
+    try {
+        const now = new Date();
+        const fixtures = await db('fixtures')
+            .where('prediction_closes_at', '<=', now)
+            .whereNotIn('stage', ['group', 'round32'])
+            .orderBy('kickoff_time', 'asc')
+            .select('*');
+
+        const fixtureIds = fixtures.map((f) => f.id);
+        const predictions = fixtureIds.length
+            ? await db('predictions')
+                .join('users', 'predictions.user_id', 'users.id')
+                .whereIn('predictions.fixture_id', fixtureIds)
+                .select(
+                    'predictions.id',
+                    'predictions.fixture_id',
+                    'users.username',
+                    db.raw('predictions.predicted_home_goals as home_goals'),
+                    db.raw('predictions.predicted_away_goals as away_goals'),
+                    db.raw('predictions.penalty_home_goals as pen_home_goals'),
+                    db.raw('predictions.penalty_away_goals as pen_away_goals'),
+                    'predictions.result',
+                    'predictions.points',
+                    db.raw('predictions.created_at as predicted_at'),
+                )
+                .orderBy('users.username', 'asc')
+            : [];
+
+        const predMap: Record<string, typeof predictions> = {};
+        for (const p of predictions) {
+            if (!predMap[p.fixture_id]) predMap[p.fixture_id] = [];
+            predMap[p.fixture_id].push(p);
+        }
+
+        const data = fixtures.map((f) => ({
+            fixture: {
+                id: f.id,
+                match_number: f.match_number,
+                home_team: f.home_team,
+                away_team: f.away_team,
+                kickoff_time: f.kickoff_time,
+                stage: f.stage,
+                status: f.status,
+                home_score: f.home_score,
+                away_score: f.away_score,
+                penalty_home_score: f.penalty_home_score,
+                penalty_away_score: f.penalty_away_score,
+            },
+            predictions: predMap[f.id] ?? [],
+        }));
+
+        res.json({ success: true, data });
+    } catch (err) {
+        console.error('Locked fixtures error:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch export data', code: 'INTERNAL_ERROR' });
+    }
+});
+
 // GET /api/predictions/:fixture_id - Get user's prediction for a fixture
 router.get('/:fixture_id', authenticateToken, async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.sub;
@@ -314,10 +377,7 @@ router.get('/:fixture_id', authenticateToken, async (req: Request, res: Response
     }
 });
 
-// GET /api/predictions/locked-fixtures
-// Returns knockout (round16+) fixtures whose prediction window is closed, with all users' predictions.
-// Available to any authenticated user — safe to expose since predictions are locked.
-router.get('/locked-fixtures', authenticateToken, async (_req: Request, res: Response): Promise<void> => {
+export default router;
     try {
         const now = new Date();
         const fixtures = await db('fixtures')

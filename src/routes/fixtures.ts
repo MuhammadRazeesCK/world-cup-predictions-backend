@@ -145,18 +145,37 @@ router.get('/:id/live-data', async (req: Request, res: Response): Promise<void> 
         const homeId = competitors.find((c: any) => c.homeAway === 'home')?.id;
 
         // ESPN uses keyEvents (not plays) for soccer
-        // Accept all scoring plays (Goal, Penalty, etc.) — type.text varies
+        // Accept all scoring plays (Goal, Penalty, Own Goal, etc.) — type.text varies
         const keyEvents: any[] = response.data?.keyEvents ?? [];
         const scorers = keyEvents
             .filter((e: any) => e.scoringPlay === true)
             .map((e: any) => {
-                // Text format: "Goal! Home 0, Away 1. Scorer Name (Team) description..."
                 const text: string = e.text ?? '';
+                const isOwnGoal = /own goal/i.test(text);
+                const isPenalty = /penalty/i.test(e.type?.text ?? '');
+
+                // Own goal format: "Own Goal by Mohamed Hany, Egypt. Australia 1, Egypt 1."
+                // Regular format:  "Goal! Home 0, Away 1. Scorer Name (Team) description..."
+                if (isOwnGoal) {
+                    const ogMatch = text.match(/Own Goal by (.+?),\s*(.+?)\./i);
+                    const scorerName = ogMatch?.[1]?.trim() ?? 'Unknown';
+                    const playerTeam = (ogMatch?.[2] ?? '').toLowerCase().trim();
+                    // OG benefits the OPPOSITE team of the player
+                    const playerIsHome = fixture.home_team.toLowerCase().includes(playerTeam)
+                        || playerTeam.includes(fixture.home_team.toLowerCase());
+                    return {
+                        name: scorerName,
+                        minute: e.clock?.displayValue ?? '',
+                        team: playerIsHome ? 'away' : 'home', // goal credited to opposite side
+                        isOwnGoal: true,
+                        isPenalty: false,
+                    };
+                }
+
+                // Regular goal: extract Name (Team)
                 const m = text.match(/\.\s*(.+?)\s*\((.+?)\)/);
                 const scorerName = m?.[1]?.trim() ?? 'Unknown';
                 const teamInParens = (m?.[2] ?? '').toLowerCase();
-
-                // Match team against fixture home/away names
                 const homeMatch = fixture.home_team.toLowerCase().includes(teamInParens)
                     || teamInParens.includes(fixture.home_team.toLowerCase());
 
@@ -164,8 +183,8 @@ router.get('/:id/live-data', async (req: Request, res: Response): Promise<void> 
                     name: scorerName,
                     minute: e.clock?.displayValue ?? '',
                     team: homeMatch ? 'home' : 'away',
-                    isOwnGoal: /own goal/i.test(text),
-                    isPenalty: /penalty/i.test(text),
+                    isOwnGoal: false,
+                    isPenalty,
                 };
             });
 

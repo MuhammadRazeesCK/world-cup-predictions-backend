@@ -138,7 +138,7 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
                 db.raw('rl.last_seen_ts'),
                 db.raw('COALESCE(rl.req_count, 0) as req_count'),
             )
-            .orderBy(db.raw('rl.last_seen_ts IS NULL DESC, rl.last_seen_ts ASC'));
+            .orderByRaw('rl.last_seen_ts IS NULL DESC, rl.last_seen_ts ASC');
 
         const inactiveUsers = allUserActivity
             .filter((u: any) => {

@@ -73,7 +73,7 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
             .where('timestamp', '>=', cutoff24h)
             .whereNotNull('username')
             .groupBy('username', 'role')
-            .orderBy('total_requests', 'desc')
+            .orderBy('last_seen', 'desc')
             .select(
                 'username',
                 'role',
@@ -81,6 +81,7 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
                 db.raw('MIN(timestamp) as first_seen'),
                 db.raw('MAX(timestamp) as last_seen'),
                 db.raw('COUNT(DISTINCT path) as unique_paths'),
+                db.raw(`EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp)))::int as session_span_seconds`),
             );
 
         const userPaths = await db('request_logs')
@@ -113,9 +114,45 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
             firstSeen24h: u.first_seen,
             lastSeen: u.last_seen,
             uniquePaths: parseInt(u.unique_paths),
+            sessionSpanSeconds: parseInt(u.session_span_seconds ?? '0'),
             firstEverSeen: firstVisitMap[u.username] ?? null,
             topPaths: pathsByUser[u.username] ?? [],
         }));
+
+        // ── Inactive users (non-admin, not seen in request_logs for 7+ days) ──
+        const allUserActivity = await db('users')
+            .where('users.role', 'user')
+            .leftJoin(
+                db('request_logs')
+                    .whereNotNull('username')
+                    .groupBy('username')
+                    .select('username', db.raw('MAX(timestamp) as last_seen_ts'), db.raw('COUNT(*) as req_count'))
+                    .as('rl'),
+                'users.username', 'rl.username',
+            )
+            .select(
+                'users.id',
+                'users.username',
+                'users.created_at',
+                'users.last_login',
+                db.raw('rl.last_seen_ts'),
+                db.raw('COALESCE(rl.req_count, 0) as req_count'),
+            )
+            .orderBy(db.raw('rl.last_seen_ts IS NULL DESC, rl.last_seen_ts ASC'));
+
+        const inactiveUsers = allUserActivity
+            .filter((u: any) => {
+                if (!u.last_seen_ts) return true; // never visited
+                const diffMs = Date.now() - new Date(u.last_seen_ts).getTime();
+                return diffMs > 7 * 24 * 60 * 60 * 1000; // not seen in 7 days
+            })
+            .map((u: any) => ({
+                username: u.username,
+                joinedAt: u.created_at,
+                lastLogin: u.last_login,
+                lastSeen: u.last_seen_ts ?? null,
+                totalRequests: parseInt(u.req_count ?? '0'),
+            }));
 
         // ── User funnel ──────────────────────────────────────────────────────
         const userCounts = await db('users')
@@ -230,6 +267,7 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
                 },
                 upcomingCoverage,
                 userActivity: enrichedUserActivity,
+                inactiveUsers,
             },
         });
     } catch (err) {

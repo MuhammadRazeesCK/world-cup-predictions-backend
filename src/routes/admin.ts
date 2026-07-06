@@ -689,4 +689,151 @@ router.delete('/announcement', async (req: Request, res: Response): Promise<void
     }
 });
 
+// ── Poll management ───────────────────────────────────────────────────────────
+
+// GET /api/admin/polls — all polls (active + inactive)
+router.get('/polls', async (_req: Request, res: Response): Promise<void> => {
+    try {
+        const polls = await db('polls').orderBy('created_at', 'desc').select('*');
+
+        const pollIds = polls.map((p) => p.id);
+        const voteCounts = pollIds.length
+            ? await db('poll_votes')
+                .whereIn('poll_id', pollIds)
+                .groupBy('poll_id')
+                .select('poll_id', db.raw('COUNT(*) as total'))
+            : [];
+
+        const voteMap: Record<string, number> = {};
+        for (const v of voteCounts) voteMap[v.poll_id] = parseInt(v.total);
+
+        const data = polls.map((p) => ({
+            ...p,
+            totalVotes: voteMap[p.id] ?? 0,
+        }));
+
+        res.json({ success: true, data });
+    } catch (err) {
+        console.error('Admin polls error:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch polls', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// POST /api/admin/polls — create a poll
+router.post('/polls', async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { question, options, option_images, emoji, closes_at } = req.body;
+
+        if (!question?.trim()) {
+            res.status(400).json({ success: false, error: 'Question is required', code: 'VALIDATION_ERROR' });
+            return;
+        }
+        if (!Array.isArray(options) || options.length < 2 || options.length > 8) {
+            res.status(400).json({ success: false, error: 'Provide 2–8 options', code: 'VALIDATION_ERROR' });
+            return;
+        }
+        const cleanOptions = options.map((o: string) => o.trim()).filter(Boolean);
+        if (cleanOptions.length < 2) {
+            res.status(400).json({ success: false, error: 'At least 2 non-empty options required', code: 'VALIDATION_ERROR' });
+            return;
+        }
+        // option_images: parallel array of image URLs (or null) per option
+        const cleanImages: (string | null)[] = Array.isArray(option_images)
+            ? cleanOptions.map((_: string, i: number) => (typeof option_images[i] === 'string' && option_images[i].trim() ? option_images[i].trim() : null))
+            : cleanOptions.map(() => null);
+
+        const [poll] = await db('polls').insert({
+            question: question.trim(),
+            options: JSON.stringify(cleanOptions),
+            option_images: JSON.stringify(cleanImages),
+            emoji: emoji?.trim() || null,
+            closes_at: closes_at || null,
+            created_by: req.user!.sub,
+        }).returning('*');
+
+        await logAdminAction(req.user!.sub, 'poll_created', { poll_id: poll.id, question: poll.question });
+
+        res.status(201).json({ success: true, data: poll });
+    } catch (err) {
+        console.error('Create poll error:', err);
+        res.status(500).json({ success: false, error: 'Failed to create poll', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// PATCH /api/admin/polls/:id — update active state or close date
+router.patch('/polls/:id', async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const { is_active, closes_at, option_images } = req.body;
+
+        const poll = await db('polls').where({ id }).first();
+        if (!poll) {
+            res.status(404).json({ success: false, error: 'Poll not found', code: 'NOT_FOUND' });
+            return;
+        }
+
+        const updates: Record<string, unknown> = { updated_at: new Date() };
+        if (typeof is_active === 'boolean') updates.is_active = is_active;
+        if (closes_at !== undefined) updates.closes_at = closes_at || null;
+        if (Array.isArray(option_images)) updates.option_images = JSON.stringify(option_images);
+
+        await db('polls').where({ id }).update(updates);
+        await logAdminAction(req.user!.sub, 'poll_updated', { poll_id: id, ...updates });
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Update poll error:', err);
+        res.status(500).json({ success: false, error: 'Failed to update poll', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// DELETE /api/admin/polls/:id — delete poll + all votes
+router.delete('/polls/:id', async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const poll = await db('polls').where({ id }).first();
+        if (!poll) {
+            res.status(404).json({ success: false, error: 'Poll not found', code: 'NOT_FOUND' });
+            return;
+        }
+        await db('polls').where({ id }).delete(); // votes cascade-deleted
+        await logAdminAction(req.user!.sub, 'poll_deleted', { poll_id: id, question: poll.question });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Delete poll error:', err);
+        res.status(500).json({ success: false, error: 'Failed to delete poll', code: 'INTERNAL_ERROR' });
+    }
+});
+
+// GET /api/admin/polls/:id/votes — who voted for whom
+router.get('/polls/:id/votes', async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const poll = await db('polls').where({ id }).first();
+        if (!poll) {
+            res.status(404).json({ success: false, error: 'Poll not found', code: 'NOT_FOUND' });
+            return;
+        }
+
+        const votes = await db('poll_votes')
+            .join('users', 'poll_votes.user_id', 'users.id')
+            .where('poll_votes.poll_id', id)
+            .select('poll_votes.option_index', 'users.username')
+            .orderBy('poll_votes.option_index')
+            .orderBy('users.username');
+
+        const options = poll.options as string[];
+        const byOption: { index: number; label: string; voters: string[] }[] = options.map((label, i) => ({
+            index: i,
+            label,
+            voters: votes.filter((v: any) => v.option_index === i).map((v: any) => v.username),
+        }));
+
+        res.json({ success: true, data: { poll: { id: poll.id, question: poll.question }, byOption } });
+    } catch (err) {
+        console.error('Poll votes error:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch poll votes', code: 'INTERNAL_ERROR' });
+    }
+});
+
 export default router;

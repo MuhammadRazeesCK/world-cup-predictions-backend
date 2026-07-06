@@ -11,6 +11,7 @@ import leaderboardRoutes from './routes/leaderboard';
 import adminRoutes from './routes/admin';
 import userRoutes from './routes/users';
 import announcementRoutes from './routes/announcements';
+import pollRoutes from './routes/polls';
 import { startScoreUpdater } from './jobs/scoreUpdater';
 import { startPredictionCloseNotifier } from './jobs/predictionCloseNotifier';
 import { initWhatsApp } from './services/whatsapp';
@@ -67,6 +68,7 @@ app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/announcements', announcementRoutes);
+app.use('/api/polls', pollRoutes);
 app.use('/api/admin/monitoring', monitoringRoutes);
 
 // 404 handler

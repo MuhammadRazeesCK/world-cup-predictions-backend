@@ -108,11 +108,16 @@ router.post('/:id/vote', async (req: Request, res: Response): Promise<void> => {
 
         const existing = await db('poll_votes').where({ poll_id: id, user_id: userId }).first();
         if (existing) {
-            res.status(400).json({ success: false, error: 'You already voted on this poll', code: 'ALREADY_VOTED' });
-            return;
+            if (existing.option_index === option_index) {
+                // Same option — no-op
+                res.json({ success: true });
+                return;
+            }
+            // Different option — update existing vote
+            await db('poll_votes').where({ poll_id: id, user_id: userId }).update({ option_index });
+        } else {
+            await db('poll_votes').insert({ poll_id: id, user_id: userId, option_index });
         }
-
-        await db('poll_votes').insert({ poll_id: id, user_id: userId, option_index });
 
         res.json({ success: true });
     } catch (err) {

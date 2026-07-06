@@ -4,7 +4,6 @@ services:
     runtime: node
     buildCommand: npm install && npm run build
     startCommand: node dist/index.js
-    preDeployCommand: npm run migrate:prod
     envVars:
       - key: NODE_ENV
         value: production

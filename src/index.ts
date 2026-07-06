@@ -183,6 +183,40 @@ app.listen(PORT, async () => {
             await db.raw('CREATE INDEX ON request_logs(username)');
             console.log('Migrated: created request_logs table');
         }
+        // polls + poll_votes tables
+        const hasPollsTable = await db.schema.hasTable('polls');
+        if (!hasPollsTable) {
+            await db.schema.createTable('polls', (t) => {
+                t.uuid('id').primary().defaultTo(db.raw('gen_random_uuid()'));
+                t.text('question').notNullable();
+                t.jsonb('options').notNullable();
+                t.jsonb('option_images').nullable();
+                t.string('emoji', 10).nullable();
+                t.boolean('is_active').defaultTo(true).notNullable();
+                t.timestamp('closes_at').nullable();
+                t.uuid('created_by').nullable().references('id').inTable('users').onDelete('SET NULL');
+                t.timestamp('created_at').defaultTo(db.fn.now());
+                t.timestamp('updated_at').defaultTo(db.fn.now());
+            });
+            await db.schema.createTable('poll_votes', (t) => {
+                t.uuid('id').primary().defaultTo(db.raw('gen_random_uuid()'));
+                t.uuid('poll_id').notNullable().references('id').inTable('polls').onDelete('CASCADE');
+                t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
+                t.integer('option_index').notNullable();
+                t.timestamp('created_at').defaultTo(db.fn.now());
+                t.unique(['poll_id', 'user_id']);
+            });
+            await db.raw('CREATE INDEX idx_poll_votes_poll ON poll_votes(poll_id)');
+            await db.raw('CREATE INDEX idx_poll_votes_user ON poll_votes(user_id)');
+            console.log('Migrated: created polls and poll_votes tables');
+        } else {
+            // Add option_images column if polls table exists but column doesn't
+            const hasOptionImages = await db.schema.hasColumn('polls', 'option_images');
+            if (!hasOptionImages) {
+                await db.schema.alterTable('polls', (t) => { t.jsonb('option_images').nullable(); });
+                console.log('Migrated: added option_images to polls');
+            }
+        }
     } catch (err) {
         console.error('Startup migration error:', err);
     }

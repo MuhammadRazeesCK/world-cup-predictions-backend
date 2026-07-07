@@ -154,6 +154,12 @@ app.listen(PORT, async () => {
             await db.schema.alterTable('fixtures', (t) => { t.timestamp('whatsapp_notified_at').nullable().defaultTo(null); });
             console.log('Migrated: added whatsapp_notified_at to fixtures');
         }
+        // stream_url on fixtures
+        const hasStreamUrl = await db.schema.hasColumn('fixtures', 'stream_url');
+        if (!hasStreamUrl) {
+            await db.schema.alterTable('fixtures', (t) => { t.text('stream_url').nullable().defaultTo(null); });
+            console.log('Migrated: added stream_url to fixtures');
+        }
         // server_events table for monitoring
         const hasServerEvents = await db.schema.hasTable('server_events');
         if (!hasServerEvents) {

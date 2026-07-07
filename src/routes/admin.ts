@@ -379,6 +379,26 @@ router.delete('/fixtures/:id/poster', async (req: Request, res: Response): Promi
     }
 });
 
+// PUT /api/admin/fixtures/:id/stream — set or clear the live stream URL
+router.put('/fixtures/:id/stream', async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    const { stream_url } = req.body;
+    try {
+        const fixture = await db('fixtures').where({ id }).first();
+        if (!fixture) {
+            res.status(404).json({ success: false, error: 'Fixture not found', code: 'NOT_FOUND' });
+            return;
+        }
+        const url = typeof stream_url === 'string' && stream_url.trim() ? stream_url.trim() : null;
+        await db('fixtures').where({ id }).update({ stream_url: url });
+        await logAdminAction(req.user!.sub, 'fixture_stream_url_updated', { fixture_id: id, stream_url: url });
+        res.json({ success: true, data: { stream_url: url } });
+    } catch (err) {
+        console.error('Set stream URL error:', err);
+        res.status(500).json({ success: false, error: 'Failed to update stream URL', code: 'INTERNAL_ERROR' });
+    }
+});
+
 // GET /api/admin/fixtures - List all fixtures with prediction counts
 router.get('/fixtures', async (_req: Request, res: Response): Promise<void> => {
     try {

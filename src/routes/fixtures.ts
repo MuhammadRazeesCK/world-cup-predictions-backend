@@ -31,25 +31,18 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     }
 });
 
-// GET /api/fixtures/available - Upcoming fixtures for next 2 days with user predictions (protected)
+// GET /api/fixtures/available - All upcoming/live fixtures + recently completed, with user predictions (protected)
 router.get('/available', authenticateToken, async (req: Request, res: Response): Promise<void> => {
     try {
         const userId = req.user!.sub;
         const now = DateTime.now().setZone('Asia/Kolkata');
-        const twoDaysLater = now.plus({ days: 2 });
         // 14h back from now = up to 12h post-match display (2h match + 12h window)
-        // Use kickoff_time so admin edits never reset the clock
         const kickoffCutoff = now.minus({ hours: 14 });
 
         const fixtures = await db('fixtures')
             .where(function () {
-                // Upcoming scheduled fixtures in next 2 days
-                this.where(function () {
-                    this.whereBetween('kickoff_time', [now.toJSDate(), twoDaysLater.toJSDate()])
-                        .whereIn('status', ['scheduled', 'live']);
-                })
-                // Currently live
-                .orWhere('status', 'live')
+                // All scheduled/live fixtures (no upper time cap — admin controls what's added)
+                this.whereIn('status', ['scheduled', 'live'])
                 // Completed within ~14h of kickoff (keeps result visible for ~12h post-match)
                 .orWhere(function () {
                     this.where('status', 'completed')

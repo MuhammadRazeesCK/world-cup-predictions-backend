@@ -8,7 +8,7 @@ const router = Router();
 const ESPN_CORE = 'https://sports.core.api.espn.com/v2/sports/soccer/leagues/fifa.world';
 const ESPN_SITE = 'https://site.web.api.espn.com/apis/v2/sports/soccer/fifa.world';
 
-// 5-minute in-memory cache
+// 5-minute in-memory cache — set to null to bust on deploy
 let cache: { data: TournamentStats; cachedAt: number } | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -72,15 +72,18 @@ async function resolveAthleteRef(ref: string): Promise<{ name: string; shortName
     const shortName = data.shortName ?? name;
     const country = data.citizenship ?? data.citizenshipCountry?.displayName ?? '?';
 
-    // Flag from ESPN CDN based on citizenship
+    // Extract athlete ID from the $ref URL to build ESPN CDN headshot URL
+    // Pattern: .../athletes/12345?... → ID = 12345
+    const athleteId = ref.match(/\/athletes\/(\d+)/)?.[1] ?? null;
+    const headshotUrl = data.headshot?.href
+        ?? (athleteId ? `https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/${athleteId}.png&w=200&h=145` : null);
+
     let flagUrl: string | null = null;
     if (data.flag?.href) flagUrl = data.flag.href;
     else if (data.citizenship) {
         const code = (data.citizenship as string).toLowerCase().replace(/\s+/g, '-');
         flagUrl = `https://a.espncdn.com/i/teamlogos/countries/500/${code}.png`;
     }
-
-    const headshotUrl = data.headshot?.href ?? null;
 
     return { name, shortName, country, flagUrl, headshotUrl };
 }

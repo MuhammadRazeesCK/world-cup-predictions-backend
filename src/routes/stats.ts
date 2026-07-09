@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import axios from 'axios';
 import { authenticateToken } from '../middleware/auth';
+import db from '../db';
 
 const router = Router();
 
@@ -195,6 +196,30 @@ router.get('/tournament', authenticateToken, async (_req: Request, res: Response
     } catch (err) {
         console.error('Tournament stats error:', err);
         res.status(500).json({ success: false, error: 'Failed to fetch tournament stats' });
+    }
+});
+
+// GET /api/stats/bracket — knockout bracket from our own fixtures DB
+router.get('/bracket', authenticateToken, async (_req: Request, res: Response): Promise<void> => {
+    try {
+        const stages = ['round32', 'round16', 'qf', 'sf', 'third_place', 'final'];
+        const fixtures = await db('fixtures')
+            .whereIn('stage', stages)
+            .orderBy('kickoff_time', 'asc')
+            .select('id', 'match_number', 'home_team', 'away_team', 'home_score', 'away_score',
+                'penalty_home_score', 'penalty_away_score', 'penalty_enabled',
+                'stage', 'status', 'kickoff_time');
+
+        // Group by stage
+        const byStage: Record<string, typeof fixtures> = {};
+        for (const stage of stages) {
+            byStage[stage] = fixtures.filter((f) => f.stage === stage);
+        }
+
+        res.json({ success: true, data: byStage });
+    } catch (err) {
+        console.error('Bracket error:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch bracket' });
     }
 });
 

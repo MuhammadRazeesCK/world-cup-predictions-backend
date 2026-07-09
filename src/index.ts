@@ -160,6 +160,23 @@ app.listen(PORT, async () => {
             await db.schema.alterTable('fixtures', (t) => { t.text('stream_url').nullable().defaultTo(null); });
             console.log('Migrated: added stream_url to fixtures');
         }
+        // stream_views table — tracks who watched which match stream + duration
+        const hasStreamViews = await db.schema.hasTable('stream_views');
+        if (!hasStreamViews) {
+            await db.schema.createTable('stream_views', (t) => {
+                t.uuid('id').primary().defaultTo(db.raw('gen_random_uuid()'));
+                t.uuid('fixture_id').notNullable().references('id').inTable('fixtures').onDelete('CASCADE');
+                t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
+                t.timestamp('opened_at').notNullable().defaultTo(db.fn.now());
+                t.timestamp('closed_at').nullable();
+                t.integer('duration_seconds').nullable(); // null = still watching or abandoned
+                t.boolean('abandoned').defaultTo(false);  // true = tab closed mid-stream
+            });
+            await db.raw('CREATE INDEX idx_stream_views_fixture ON stream_views(fixture_id)');
+            await db.raw('CREATE INDEX idx_stream_views_user ON stream_views(user_id)');
+            await db.raw('CREATE INDEX idx_stream_views_opened ON stream_views(opened_at)');
+            console.log('Migrated: created stream_views table');
+        }
         // server_events table for monitoring
         const hasServerEvents = await db.schema.hasTable('server_events');
         if (!hasServerEvents) {

@@ -188,4 +188,52 @@ router.get('/:id/live-data', async (req: Request, res: Response): Promise<void> 
     }
 });
 
+// POST /api/fixtures/:id/stream-view/open — user opened the stream
+router.post('/:id/stream-view/open', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const userId = req.user!.sub;
+
+        const fixture = await db('fixtures').where({ id }).select('id', 'home_team', 'away_team').first();
+        if (!fixture) { res.status(404).json({ success: false }); return; }
+
+        const [view] = await db('stream_views').insert({
+            fixture_id: id,
+            user_id: userId,
+            opened_at: new Date(),
+        }).returning('id');
+
+        res.json({ success: true, view_id: view.id });
+    } catch (err) {
+        console.error('Stream open error:', err);
+        res.status(500).json({ success: false });
+    }
+});
+
+// POST /api/fixtures/:id/stream-view/close — user closed the stream
+router.post('/:id/stream-view/close', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const userId = req.user!.sub;
+        const { view_id, duration_seconds, abandoned } = req.body;
+
+        const query = db('stream_views')
+            .where({ fixture_id: id, user_id: userId })
+            .whereNull('closed_at');
+
+        if (view_id) query.where({ id: view_id });
+
+        await query.update({
+            closed_at: new Date(),
+            duration_seconds: duration_seconds ?? null,
+            abandoned: abandoned ?? false,
+        });
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Stream close error:', err);
+        res.status(500).json({ success: false });
+    }
+});
+
 export default router;

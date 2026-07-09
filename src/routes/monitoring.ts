@@ -276,5 +276,57 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
     }
 });
 
+// GET /api/admin/monitoring/stream-views — who watched which match + duration
+router.get('/stream-views', async (_req: Request, res: Response): Promise<void> => {
+    try {
+        // Per-view rows with user + fixture info
+        const views = await db('stream_views as sv')
+            .join('users as u', 'sv.user_id', 'u.id')
+            .join('fixtures as f', 'sv.fixture_id', 'f.id')
+            .orderBy('sv.opened_at', 'desc')
+            .limit(200)
+            .select(
+                'sv.id',
+                'sv.opened_at',
+                'sv.closed_at',
+                'sv.duration_seconds',
+                'sv.abandoned',
+                'u.username',
+                'f.home_team',
+                'f.away_team',
+                'f.match_number',
+                db.raw("CONCAT(f.home_team, ' vs ', f.away_team) as match_label"),
+            );
+
+        // Aggregate: total views + avg duration per fixture
+        const byFixture = await db('stream_views as sv')
+            .join('fixtures as f', 'sv.fixture_id', 'f.id')
+            .groupBy('f.id', 'f.home_team', 'f.away_team', 'f.match_number')
+            .orderBy('total_views', 'desc')
+            .select(
+                'f.home_team',
+                'f.away_team',
+                'f.match_number',
+                db.raw('COUNT(*) as total_views'),
+                db.raw('COUNT(DISTINCT sv.user_id) as unique_viewers'),
+                db.raw('ROUND(AVG(sv.duration_seconds)) as avg_duration_seconds'),
+                db.raw('MAX(sv.duration_seconds) as max_duration_seconds'),
+            );
+
+        // Currently live viewers (opened but not closed)
+        const liveViewers = await db('stream_views as sv')
+            .join('users as u', 'sv.user_id', 'u.id')
+            .join('fixtures as f', 'sv.fixture_id', 'f.id')
+            .whereNull('sv.closed_at')
+            .where('sv.opened_at', '>=', db.raw("NOW() - INTERVAL '3 hours'"))
+            .select('u.username', 'f.home_team', 'f.away_team', 'sv.opened_at');
+
+        res.json({ success: true, data: { views, byFixture, liveViewers } });
+    } catch (err) {
+        console.error('Stream views error:', err);
+        res.status(500).json({ success: false, error: 'Failed to fetch stream views' });
+    }
+});
+
 export default router;
 

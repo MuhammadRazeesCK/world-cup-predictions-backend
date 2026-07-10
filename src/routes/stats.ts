@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import axios from 'axios';
 import { authenticateToken } from '../middleware/auth';
+import { requireAdmin } from '../middleware/adminAuth';
 import db from '../db';
 
 const router = Router();
@@ -222,6 +223,12 @@ router.get('/bracket', authenticateToken, async (_req: Request, res: Response): 
         console.error('Bracket error:', err);
         res.status(500).json({ success: false, error: 'Failed to fetch bracket' });
     }
+});
+
+// POST /api/stats/flush — admin-only cache bust, forces fresh ESPN fetch
+router.post('/flush', authenticateToken, requireAdmin, (_req: Request, res: Response): void => {
+    cache = null;
+    res.json({ success: true, message: 'Stats cache cleared — next request will fetch fresh from ESPN' });
 });
 
 export default router;

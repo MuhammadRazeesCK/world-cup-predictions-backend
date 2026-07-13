@@ -52,90 +52,9 @@ async function storeSession(
     });
 }
 
-// POST /api/auth/signup
-router.post('/signup', authLimiter, async (req: Request, res: Response): Promise<void> => {
-    const { email, username, password } = req.body;
-
-    // Validate required fields
-    if (!email || !username || !password) {
-        res.status(400).json({ success: false, error: 'Email, username and password are required', code: 'VALIDATION_ERROR' });
-        return;
-    }
-
-    // Validate email format
-    const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
-    if (!emailRegex.test(email)) {
-        res.status(400).json({ success: false, error: 'Invalid email format', code: 'VALIDATION_ERROR' });
-        return;
-    }
-
-    // Validate username: 3-50 chars, alphanumeric + underscore
-    const usernameRegex = /^[a-zA-Z0-9_]{3,50}$/;
-    if (!usernameRegex.test(username)) {
-        res.status(400).json({
-            success: false,
-            error: 'Username must be 3-50 characters, alphanumeric and underscore only',
-            code: 'VALIDATION_ERROR',
-        });
-        return;
-    }
-
-    // Validate password strength: min 8 chars, 1 uppercase, 1 number, 1 special char
-    const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]).{8,}$/;
-    if (!passwordRegex.test(password)) {
-        res.status(400).json({
-            success: false,
-            error: 'Password must be at least 8 characters with 1 uppercase, 1 number, and 1 special character',
-            code: 'VALIDATION_ERROR',
-        });
-        return;
-    }
-
-    try {
-        // Check for duplicate email or username
-        const existing = await db('users')
-            .where('email', email.toLowerCase())
-            .orWhere('username', username)
-            .first();
-
-        if (existing) {
-            const field = existing.email === email.toLowerCase() ? 'email' : 'username';
-            res.status(409).json({ success: false, error: `This ${field} is already taken`, code: 'CONFLICT' });
-            return;
-        }
-
-        // Hash password
-        const passwordHash = await bcrypt.hash(password, 10);
-
-        // Insert user
-        const [user] = await db('users')
-            .insert({
-                email: email.toLowerCase(),
-                username,
-                password_hash: passwordHash,
-                role: 'user',
-                is_active: true,
-            })
-            .returning(['id', 'email', 'username', 'role']);
-
-        // Generate token
-        const token = generateToken(user);
-        await storeSession(user.id, token, req);
-
-        res.status(201).json({
-            success: true,
-            data: {
-                id: user.id,
-                email: user.email,
-                username: user.username,
-                token,
-                expiresIn: TOKEN_EXPIRY_SECONDS,
-            },
-        });
-    } catch (err) {
-        console.error('Signup error:', err);
-        res.status(500).json({ success: false, error: 'Registration failed', code: 'INTERNAL_ERROR' });
-    }
+// POST /api/auth/signup — registrations closed
+router.post('/signup', authLimiter, (_req: Request, res: Response): void => {
+    res.status(403).json({ success: false, error: 'Registrations are closed. The prediction league has ended.', code: 'REGISTRATION_CLOSED' });
 });
 
 // POST /api/auth/login

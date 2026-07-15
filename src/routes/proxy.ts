@@ -86,6 +86,11 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
         res.setHeader('Content-Type', contentType);
         if (upstream.headers['cache-control']) res.setHeader('Cache-Control', upstream.headers['cache-control'] as string);
 
+        // Override Helmet headers — must happen right before send so they win
+        res.removeHeader('X-Frame-Options');
+        res.setHeader('Content-Security-Policy', 'frame-ancestors *');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+
         // For HTML: inject <base> tag so all relative resources still load from original domain
         if (contentType.includes('text/html')) {
             let html = Buffer.from(upstream.data).toString('utf-8');

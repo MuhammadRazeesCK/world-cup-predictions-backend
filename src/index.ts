@@ -31,14 +31,6 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173')
     .map((o) => o.trim());
 
 // Security middleware
-// Proxy route must be registered BEFORE helmet so we can override framing headers
-app.use('/api/proxy', (req, res, next) => {
-    // Allow any origin to frame proxy responses (the whole point of the proxy)
-    res.removeHeader('X-Frame-Options');
-    res.setHeader('Content-Security-Policy', "frame-ancestors *");
-    next();
-});
-
 app.use(helmet());
 app.use(
     cors({

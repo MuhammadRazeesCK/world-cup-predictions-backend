@@ -188,9 +188,17 @@ app.listen(PORT, async () => {
                 t.increments('id').primary();
                 t.string('player_name', 200).notNullable().unique();
                 t.text('photo_url').notNullable();
+                t.integer('crop_y').notNullable().defaultTo(15); // % from top where face is
                 t.timestamp('updated_at').defaultTo(db.fn.now());
             });
             console.log('Migrated: created player_photos table');
+        } else {
+            // Add crop_y if missing
+            const hasCropY = await db.schema.hasColumn('player_photos', 'crop_y');
+            if (!hasCropY) {
+                await db.schema.alterTable('player_photos', t => t.integer('crop_y').notNullable().defaultTo(15));
+                console.log('Migrated: added crop_y to player_photos');
+            }
         }
         // server_events table for monitoring
         const hasServerEvents = await db.schema.hasTable('server_events');

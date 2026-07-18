@@ -22,6 +22,7 @@ interface PlayerLeader {
     country: string;
     flagUrl: string | null;
     headshotUrl: string | null;
+    cropY: number; // % from top where face is (0-100, default 15)
 }
 
 interface StatCategory {
@@ -65,9 +66,9 @@ async function fetchJson(url: string): Promise<any> {
     }
 }
 
-async function resolveAthleteRef(ref: string): Promise<{ name: string; shortName: string; country: string; flagUrl: string | null; headshotUrl: string | null }> {
+async function resolveAthleteRef(ref: string): Promise<{ name: string; shortName: string; country: string; flagUrl: string | null; headshotUrl: string | null; cropY: number }> {
     const data = await fetchJson(ref);
-    if (!data) return { name: '?', shortName: '?', country: '?', flagUrl: null, headshotUrl: null };
+    if (!data) return { name: '?', shortName: '?', country: '?', flagUrl: null, headshotUrl: null, cropY: 15 };
 
     const name = data.displayName ?? data.fullName ?? '?';
     const shortName = data.shortName ?? name;
@@ -75,10 +76,12 @@ async function resolveAthleteRef(ref: string): Promise<{ name: string; shortName
 
     // Look up admin-provided photo from DB (most reliable source)
     let headshotUrl: string | null = null;
+    let cropY = 15;
     if (name !== '?') {
         try {
             const row = await db('player_photos').where('player_name', name).first();
             headshotUrl = row?.photo_url ?? null;
+            if (row?.crop_y != null) cropY = Number(row.crop_y);
         } catch { /* table might not exist yet */ }
     }
 
@@ -89,7 +92,7 @@ async function resolveAthleteRef(ref: string): Promise<{ name: string; shortName
         flagUrl = `https://a.espncdn.com/i/teamlogos/countries/500/${code}.png`;
     }
 
-    return { name, shortName, country, flagUrl, headshotUrl };
+    return { name, shortName, country, flagUrl, headshotUrl, cropY };
 }
 
 async function buildLeaders(): Promise<StatCategory[]> {

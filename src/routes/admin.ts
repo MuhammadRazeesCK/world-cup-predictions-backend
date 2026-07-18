@@ -870,15 +870,15 @@ router.get('/player-photos', async (_req: Request, res: Response): Promise<void>
 
 // PUT /api/admin/player-photos — upsert a player photo
 router.put('/player-photos', async (req: Request, res: Response): Promise<void> => {
-    const { player_name, photo_url } = req.body;
+    const { player_name, photo_url, crop_y } = req.body;
     if (!player_name?.trim() || !photo_url?.trim()) {
         res.status(400).json({ success: false, error: 'player_name and photo_url required' });
         return;
     }
     try {
         await db('player_photos')
-            .insert({ player_name: player_name.trim(), photo_url: photo_url.trim(), updated_at: new Date() })
-            .onConflict('player_name').merge(['photo_url', 'updated_at']);
+            .insert({ player_name: player_name.trim(), photo_url: photo_url.trim(), crop_y: Number.isFinite(Number(crop_y)) ? Number(crop_y) : 15, updated_at: new Date() })
+            .onConflict('player_name').merge(['photo_url', 'crop_y', 'updated_at']);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, error: 'Failed to save player photo' });

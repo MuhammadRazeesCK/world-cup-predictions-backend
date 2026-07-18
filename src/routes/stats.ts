@@ -56,6 +56,29 @@ interface TournamentStats {
     fetchedAt: string;
 }
 
+// Wikipedia thumbnail cache (persists for process lifetime — photos rarely change)
+const wikiCache = new Map<string, string | null>();
+
+async function getWikipediaPhoto(name: string): Promise<string | null> {
+    if (wikiCache.has(name)) return wikiCache.get(name)!;
+
+    const tryName = async (n: string): Promise<string | null> => {
+        const slug = encodeURIComponent(n.replace(/\s+/g, '_'));
+        const data = await fetchJson(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug}`);
+        return data?.thumbnail?.source ?? null;
+    };
+
+    // Try exact name, then without accents as fallback
+    let url = await tryName(name);
+    if (!url) {
+        const stripped = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (stripped !== name) url = await tryName(stripped);
+    }
+
+    wikiCache.set(name, url);
+    return url;
+}
+
 async function fetchJson(url: string): Promise<any> {
     try {
         const { data } = await axios.get(url, { timeout: 5000 });
@@ -73,9 +96,8 @@ async function resolveAthleteRef(ref: string): Promise<{ name: string; shortName
     const shortName = data.shortName ?? name;
     const country = data.citizenship ?? data.citizenshipCountry?.displayName ?? '?';
 
-    // Only use headshot if ESPN explicitly provides it — don't guess CDN URLs
-    // (ESPN soccer headshots only exist for a small subset of players)
-    const headshotUrl = data.headshot?.href ?? null;
+    // Fetch Wikipedia photo (up-to-date WC 2026 action shots)
+    const headshotUrl = name !== '?' ? await getWikipediaPhoto(name) : null;
 
     let flagUrl: string | null = null;
     if (data.flag?.href) flagUrl = data.flag.href;

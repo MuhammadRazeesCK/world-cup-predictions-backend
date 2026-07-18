@@ -181,6 +181,17 @@ app.listen(PORT, async () => {
             await db.raw('CREATE INDEX idx_stream_views_opened ON stream_views(opened_at)');
             console.log('Migrated: created stream_views table');
         }
+        // player_photos table — admin-managed photo URLs keyed by player name
+        const hasPlayerPhotos = await db.schema.hasTable('player_photos');
+        if (!hasPlayerPhotos) {
+            await db.schema.createTable('player_photos', (t) => {
+                t.increments('id').primary();
+                t.string('player_name', 200).notNullable().unique();
+                t.text('photo_url').notNullable();
+                t.timestamp('updated_at').defaultTo(db.fn.now());
+            });
+            console.log('Migrated: created player_photos table');
+        }
         // server_events table for monitoring
         const hasServerEvents = await db.schema.hasTable('server_events');
         if (!hasServerEvents) {

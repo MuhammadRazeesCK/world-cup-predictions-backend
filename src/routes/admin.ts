@@ -856,4 +856,43 @@ router.get('/polls/:id/votes', async (req: Request, res: Response): Promise<void
     }
 });
 
+/* ─── Player Photos ──────────────────────────────────────────────────────── */
+
+// GET /api/admin/player-photos
+router.get('/player-photos', async (_req: Request, res: Response): Promise<void> => {
+    try {
+        const rows = await db('player_photos').orderBy('player_name');
+        res.json({ success: true, data: rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Failed to fetch player photos' });
+    }
+});
+
+// PUT /api/admin/player-photos — upsert a player photo
+router.put('/player-photos', async (req: Request, res: Response): Promise<void> => {
+    const { player_name, photo_url } = req.body;
+    if (!player_name?.trim() || !photo_url?.trim()) {
+        res.status(400).json({ success: false, error: 'player_name and photo_url required' });
+        return;
+    }
+    try {
+        await db('player_photos')
+            .insert({ player_name: player_name.trim(), photo_url: photo_url.trim(), updated_at: new Date() })
+            .onConflict('player_name').merge(['photo_url', 'updated_at']);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Failed to save player photo' });
+    }
+});
+
+// DELETE /api/admin/player-photos/:name
+router.delete('/player-photos/:name', async (req: Request, res: Response): Promise<void> => {
+    try {
+        await db('player_photos').where('player_name', decodeURIComponent(req.params.name)).delete();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Failed to delete player photo' });
+    }
+});
+
 export default router;

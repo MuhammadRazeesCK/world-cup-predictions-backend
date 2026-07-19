@@ -95,5 +95,5 @@ export function startPredictionCloseNotifier(): void {
         } catch (err) {
             console.error('Prediction close notifier error:', err);
         }
-    }, 60_000); // check every minute
+    }, 10 * 60_000); // check every 10 minutes
 }

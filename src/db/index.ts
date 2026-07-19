@@ -13,8 +13,9 @@ const db = knex({
             }
             : process.env.DATABASE_URL,
     pool: {
-        min: 2,
+        min: 0,
         max: 10,
+        idleTimeoutMillis: 30000,
     },
 });
 

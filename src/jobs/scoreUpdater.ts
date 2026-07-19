@@ -133,18 +133,36 @@ async function updateCompletedMatches(): Promise<void> {
             .where('kickoff_time', '<=', now)
             .update({ status: 'live', updated_at: now });
 
-} catch (err: any) {
-    // Silently skip if DB is not yet available (e.g., local dev without a DB)
-    if (err?.message?.includes('Unable to acquire a connection')) {
-      return;
-    }
+    } catch (err: any) {
+        // Silently skip if DB is not yet available (e.g., local dev without a DB)
+        if (err?.message?.includes('Unable to acquire a connection')) {
+            return;
+        }
         console.error('Score updater error:', err);
     }
 }
 
+const POLL_INTERVAL_LIVE = 30 * 1000;        // 30s when a match is live
+const POLL_INTERVAL_IDLE = 10 * 60 * 1000;  // 10 min when no live matches
+
 export function startScoreUpdater(): void {
-    console.log('Score updater started (polling every 30s)');
-    // Run immediately on start, then every 30 seconds
-    updateCompletedMatches();
-    setInterval(updateCompletedMatches, 30 * 1000);
+    console.log('Score updater started (adaptive polling: 30s live / 10min idle)');
+
+    async function run() {
+        await updateCompletedMatches();
+
+        // Check if any matches are currently live to decide next interval
+        let hasLive = false;
+        try {
+            const liveCount = await db('fixtures').where({ status: 'live' }).count('id as count').first();
+            hasLive = Number(liveCount?.count ?? 0) > 0;
+        } catch {
+            // If DB is unavailable, fall back to idle interval
+        }
+
+        const interval = hasLive ? POLL_INTERVAL_LIVE : POLL_INTERVAL_IDLE;
+        setTimeout(run, interval);
+    }
+
+    run();
 }

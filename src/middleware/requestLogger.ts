@@ -37,6 +37,9 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
         // In-memory buffer for fast live view
         requestLog.push(entry);
         if (requestLog.length > MAX_ENTRIES) requestLog.shift();
+        // Skip DB write for health check pings (e.g. UptimeRobot) to avoid
+        // keeping Neon compute active on every uptime probe.
+        if (req.path === '/health') return;
         // Persist to DB (fire-and-forget — never blocks the request)
         db('request_logs').insert({
             timestamp: entry.timestamp,
@@ -64,5 +67,5 @@ export function startRequestLogCleanup(): void {
         } catch (err) {
             console.error('Request log cleanup error:', err);
         }
-    }, 60 * 60 * 1000); // every hour
+    }, 6 * 60 * 60 * 1000); // every 6 hours
 }

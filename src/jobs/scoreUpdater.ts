@@ -142,26 +142,62 @@ async function updateCompletedMatches(): Promise<void> {
     }
 }
 
-const POLL_INTERVAL_LIVE = 30 * 1000;        // 30s when a match is live
-const POLL_INTERVAL_IDLE = 10 * 60 * 1000;  // 10 min when no live matches
+const POLL_INTERVAL_ACTIVE = 30 * 1000;          // 30s when a match is live/imminent
+const PRE_MATCH_WINDOW_MS  = 30 * 60 * 1000; // start polling 30min before kickoff
 
 export function startScoreUpdater(): void {
-    console.log('Score updater started (adaptive polling: 30s live / 10min idle)');
+    console.log('Score updater started (smart scheduling: sleeps until 2h before next match)');
 
     async function run() {
-        await updateCompletedMatches();
-
-        // Check if any matches are currently live to decide next interval
+        // Check for any currently live matches first
         let hasLive = false;
         try {
             const liveCount = await db('fixtures').where({ status: 'live' }).count('id as count').first();
             hasLive = Number(liveCount?.count ?? 0) > 0;
         } catch {
-            // If DB is unavailable, fall back to idle interval
+            // DB unavailable — retry in 5 min
+            setTimeout(run, 5 * 60 * 1000);
+            return;
         }
 
-        const interval = hasLive ? POLL_INTERVAL_LIVE : POLL_INTERVAL_IDLE;
-        setTimeout(run, interval);
+        if (hasLive) {
+            // Match in progress — run updater and poll again in 30s
+            await updateCompletedMatches();
+            setTimeout(run, POLL_INTERVAL_ACTIVE);
+            return;
+        }
+
+        // No live match — find the next scheduled fixture
+        const nextFixture = await db('fixtures')
+            .where({ status: 'scheduled' })
+            .where('kickoff_time', '>', new Date())
+            .orderBy('kickoff_time', 'asc')
+            .select('kickoff_time', 'home_team', 'away_team')
+            .first();
+
+        if (!nextFixture) {
+            // No more matches — tournament is over, stop polling
+            console.log('Score updater: no upcoming fixtures, shutting down.');
+            return;
+        }
+
+        const kickoff = new Date(nextFixture.kickoff_time).getTime();
+        const now     = Date.now();
+        const msUntilActive = kickoff - PRE_MATCH_WINDOW_MS - now;
+
+        if (msUntilActive > 0) {
+            // Sleep until 2h before kickoff — Neon can suspend fully during this time
+            const sleepMins = Math.round(msUntilActive / 60_000);
+            console.log(
+                `Score updater: next match is ${nextFixture.home_team} vs ${nextFixture.away_team}. ` +
+                `Sleeping for ${sleepMins} min until 2h before kickoff.`
+            );
+            setTimeout(run, msUntilActive);
+        } else {
+            // Within 2h of kickoff — run immediately and poll every 30s
+            await updateCompletedMatches();
+            setTimeout(run, POLL_INTERVAL_ACTIVE);
+        }
     }
 
     run();

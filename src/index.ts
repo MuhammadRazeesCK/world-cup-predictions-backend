@@ -19,6 +19,7 @@ import { startPredictionCloseNotifier } from './jobs/predictionCloseNotifier';
 import { initWhatsApp } from './services/whatsapp';
 import { requestLogger, startRequestLogCleanup } from './middleware/requestLogger';
 import monitoringRoutes from './routes/monitoring';
+import wrapupRoutes from './routes/wrapup';
 
 dotenv.config();
 
@@ -74,6 +75,7 @@ app.use('/api/polls', pollRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/proxy', proxyRoutes);
 app.use('/api/admin/monitoring', monitoringRoutes);
+app.use('/api/admin/wrapup', wrapupRoutes);
 
 // 404 handler
 app.use((_req, res) => {
